@@ -1,0 +1,25 @@
+name: paper_fig_env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-base=4.4.3
+  - r-essentials
+  # Plotting & Graphics
+  - r-ggplot2
+  - r-ggraph
+  - r-ggrepel
+  - r-rcolorbrewer
+  - r-scales
+  - r-circlize
+  - r-pheatmap
+  # Data Manipulation & Stats
+  - r-data.table
+  - r-hmisc
+  - r-vegan
+  - r-igraph
+  - r-optparse
+  # Bioconductor Packages
+  - bioconductor-mixomics
+  - bioconductor-complexheatmap

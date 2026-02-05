@@ -1,0 +1,51 @@
+"Name","m/z","RT [min]","HMDB","KEGG","Super_Class","Class","Sub_Class","log2FC_Processing_1","log2FC_Processing_2","log2FC_Processing_3","log2FC_Processing_4","max_abs_log2FC","max_Treatment","max_log2FC"
+"Di-O-methylfraxetin",237.0751,5.55,"","","Phenylpropanoids and polyketides","Coumarins and derivatives","",NA,NA,NA,NA,12.1480972172534,"YS50",-12.1480972172534
+"1-hydroxy-3-{[3-(4-hydroxy-3-methoxyphenyl)prop-2-enoyl]oxy}propan-2-yl 3-(4-hydroxyphenyl)prop-2-enoate",413.1225,5.451,"","","Phenylpropanoids and polyketides","Cinnamic acids and derivatives","Hydroxycinnamic acids and derivatives",NA,NA,NA,NA,10.3076182280283,"YS50",-10.3076182280283
+"Varioxiranol I",425.19601,6.965,"","","Organoheterocyclic compounds","Benzoxepines","Dibenzoxepines",NA,NA,NA,NA,8.82630854412032,"YS50",-8.82630854412032
+"9-hydroxy-10-oxo-12-octadecenoic acid",311.22342,6.935,"","","Lipids and lipid-like molecules","Fatty Acyls","Lineolic acids and derivatives",NA,NA,NA,NA,8.48386449084443,"YS50",-8.48386449084443
+"Lupinisoflavone G",423.17984,6.539,"","","Phenylpropanoids and polyketides","Isoflavonoids","Isoflavans",NA,NA,NA,NA,8.44090247135853,"YS25",-8.44090247135853
+"7Z-Tricosen-11-one",337.32861,8.398,"","","Organic oxygen compounds","Organooxygen compounds","Carbonyl compounds",NA,NA,NA,NA,8.12272835054028,"YS25",8.12272835054028
+"Cylindroxanthone A",413.12488,5.255,"","","Organoheterocyclic compounds","Benzopyrans","1-benzopyrans",NA,NA,NA,NA,7.68108446384005,"YS75",-7.68108446384005
+"(5R)-trans-1,7-diphenyl-5-hydroxy-6-hepten-3-one",303.13318,6.754,"","","Phenylpropanoids and polyketides","Diarylheptanoids","Linear diarylheptanoids",NA,NA,NA,NA,7.61062408353493,"YS50",7.61062408353493
+"[3aR-(3aalpha,4aalpha,6beta,8abeta,9aalpha)]-3a,4,4a,5,6,8a,9,9a-Octahydro-6-hydroxy-8a-methyl-3,5-bis(methylene)naphtho[2,3-b]furan-2(3H)-one",247.13301,6.33,"","","Unknown","","",NA,NA,NA,NA,7.60968946982217,"YS50",-7.60968946982217
+"Scopoletin",193.04927,4.503,"HMDB0034344","C01752","Phenylpropanoids and polyketides","Coumarins and derivatives","Hydroxycoumarins",NA,NA,NA,NA,7.50465419767017,"YS75",-7.50465419767017
+"17-methyl-phytosphingosine",332.31476,5.982,"","","Unknown","","",NA,NA,NA,NA,7.36877600586109,"YS25",7.36877600586109
+"Ulexone B",401.14172,8.295,"","","Phenylpropanoids and polyketides","Isoflavonoids","Pyranoisoflavonoids",NA,NA,NA,NA,7.3666094819125,"YS100",7.3666094819125
+"(2e)-3-(4-hydroxyphenyl)prop-2-en-1-yl 3-phenylprop-2-enoate",281.1142,7.08,"","","Phenylpropanoids and polyketides","Cinnamic acids and derivatives","Cinnamic acid esters",NA,NA,NA,NA,7.36039911114047,"YS100",-7.36039911114047
+"t17:0 phytosphingosine",304.28479,5.988,"","","Organic nitrogen compounds","Organonitrogen compounds","Amines",NA,NA,NA,NA,7.27512054524464,"YS25",7.27512054524464
+"Streptoaminal-8N",284.25793,5.529,"","","Organoheterocyclic compounds","Azaspirodecane derivatives","",NA,NA,NA,NA,7.05494709392363,"YS100",-7.05494709392363
+"1-Acetoxy-3,15-epoxygymnomitrane",279.19476,8.01,"","","Organic acids and derivatives","Carboxylic acids and derivatives","Carboxylic acid derivatives",NA,NA,NA,NA,7.03491630788745,"YS75",-7.03491630788745
+"2-hydroxyestradiol",289.17941,5.678,"HMDB0000338","C05301","Lipids and lipid-like molecules","Steroids and steroid derivatives","Estrane steroids",NA,NA,NA,NA,6.9455715808846,"YS25",-6.9455715808846
+"Lanopylin B2",346.34247,6.822,"","","Organoheterocyclic compounds","Pyrrolines","",NA,NA,NA,NA,6.90776330229001,"YS25",6.90776330229001
+"n-{18-hydroxy-10,14,16,20-tetramethyl-22-azahexacyclo[12.10.0.0,.0,.0,.0,]tetracosan-7-yl}ethanimidic acid",457.38,8.797,"","","Unknown","","",NA,NA,NA,NA,6.86507120296678,"YS50",6.86507120296678
+"Norquandrangularic acid D",487.30676,4.19,"","","Lipids and lipid-like molecules","Prenol lipids","Triterpenoids",NA,NA,NA,NA,6.85288162646892,"YS100",-6.85288162646892
+"Fructose",179.0607,0.685,"HMDB0000660","C02336","Organic oxygen compounds","Organooxygen compounds","Carbohydrates and carbohydrate conjugates",NA,NA,NA,NA,6.73914224552935,"YS25",6.73914224552935
+"3-oxo-eicosanoic acid",325.27457,8.379,"","","Lipids and lipid-like molecules","Fatty Acyls","Fatty acids and conjugates",NA,NA,NA,NA,6.73749244881347,"YS75",6.73749244881347
+"2beta-Hydroxyjatropholone",311.16763,8.262,"","","Benzenoids","Indanes","Indanones",NA,NA,NA,NA,6.43523067776797,"YS75",-6.43523067776797
+"Daphnetoxin",483.20001,5.964,"","C09080","Lipids and lipid-like molecules","Prenol lipids","Diterpenoids",NA,NA,NA,NA,6.40259703000532,"YS25",-6.40259703000532
+"Fomentarol C",457.3674,8.738,"","","Lipids and lipid-like molecules","Steroids and steroid derivatives","Ergostane steroids",NA,NA,NA,NA,6.37968784898838,"YS75",6.37968784898838
+"3-hydroxy-7-methoxy-5-methyl-8-(propan-2-yl)naphthalene-2-carbaldehyde",259.13321,7.236,"","","Lipids and lipid-like molecules","Prenol lipids","Sesquiterpenoids",NA,NA,NA,NA,6.3789166269215,"YS100",-6.3789166269215
+"Carotarosal A",233.15335,5.209,"","","Lipids and lipid-like molecules","Prenol lipids","Sesquiterpenoids",NA,NA,NA,NA,6.34373002107731,"YS25",-6.34373002107731
+"pregn-4-ene-3,20-dione",315.23148,7.36,"HMDB0001830","C00410","Lipids and lipid-like molecules","Steroids and steroid derivatives","Pregnane steroids",NA,NA,NA,NA,6.33630036038166,"YS50",-6.33630036038166
+"(2e)-3-[(2s,3s)-2-(2h-1,3-benzodioxol-5-yl)-7-methoxy-3-methyl-2,3-dihydro-1-benzofuran-5-yl]prop-2-en-1-ol",341.13858,6.901,"","","Phenylpropanoids and polyketides","2-arylbenzofuran flavonoids","",NA,NA,NA,NA,6.31753250262757,"YS50",-6.31753250262757
+"Abyssinin III",425.1962,7.307,"","","Unknown","","",NA,NA,NA,NA,6.30934193640559,"YS25",-6.30934193640559
+"(S)-7-((3R,5S,7Ar)-5-Methyl-Hexahydro-Pyrrolizin-3-Yl)-Heptan-2-Ol",240.23193,8.928,"","","Organoheterocyclic compounds","Pyrrolizidines","",NA,NA,NA,NA,6.14467080946212,"YS50",-6.14467080946212
+"Kopsimaline A",487.17401,7.124,"","","Unknown","","",NA,NA,NA,NA,6.12417757395006,"YS100",-6.12417757395006
+"Isofraxidin",221.04607,5.444,"HMDB0253642","C17480","Phenylpropanoids and polyketides","Coumarins and derivatives","Hydroxycoumarins",NA,NA,NA,NA,6.06044664297515,"YS100",-6.06044664297515
+"Ajugasalicigenin",509.34341,8.896,"","","Unknown","","",NA,NA,NA,NA,6.0474029610234,"YS50",6.0474029610234
+"Desferrioxamine X1",571.31091,8.488,"","","Phenylpropanoids and polyketides","Macrolactams","",NA,NA,NA,NA,6.01230556967145,"YS25",6.01230556967145
+"Bisacremine E",437.25745,7.789,"","","Organoheterocyclic compounds","Naphthofurans","",NA,NA,NA,NA,5.85484718281352,"YS75",5.85484718281352
+"Darutigenol",345.23898,8.76,"","","Lipids and lipid-like molecules","Prenol lipids","Diterpenoids",NA,NA,NA,NA,5.8042182154391,"YS50",-5.8042182154391
+"12-hydroxy-8,21,21-trimethyl-5,19-bis(3-methylbut-2-en-1-yl)-3,7,20-trioxahexacyclo[15.4.1.0,.0,.0,.0,]docosa-4(13),5,9,11,15-pentaene-14,18-dione",515.24323,8.742,"","","Unknown","","",NA,NA,NA,NA,5.75969312834527,"YS100",-5.75969312834527
+"6-hydroxy-6,9-dimethyl-3-methylidene-2H,3H,3aH,4H,5H,6H,6aH,7H,8H,9bH-azuleno[4,5-b]furan-2-one",247.13342,6.514,"","","Organoheterocyclic compounds","Lactones","Gamma butyrolactones",NA,NA,NA,NA,5.75407320165288,"YS25",-5.75407320165288
+"1,5-dihydroxy-3,6-dimethoxy-2,7-diprenylxanthone",425.19629,7.655,"","","Organoheterocyclic compounds","Benzopyrans","1-benzopyrans",NA,NA,NA,NA,5.73205414222967,"YS100",-5.73205414222967
+"Dihydroalbocycline",309.20676,6.843,"","C15753","Phenylpropanoids and polyketides","Macrolides and analogues","",NA,NA,NA,NA,5.72253071089682,"YS50",-5.72253071089682
+"5-hydroxy-7-(4-hydroxydec-2(3)- enoyl) botrylactone",439.27023,8.745,"","","Lipids and lipid-like molecules","Fatty Acyls","Fatty alcohols",NA,NA,NA,NA,5.69920939635123,"YS50",-5.69920939635123
+"2-hydroxy-3-{[3,4,5-trihydroxy-6-(hydroxymethyl)oxan-2-yl]oxy}propyl (9Z,12Z,15Z)-octadeca-9,12,15-trienoate",515.31201,9.113,"","","Lipids and lipid-like molecules","Glycerolipids","Glycosylglycerols",NA,NA,NA,NA,5.69500855109954,"YS50",-5.69500855109954
+"1,1,7-trimethyl-1ah,2h,3h,5h,6h,7bh-cyclopropa[a]naphthalene",189.16379,8.409,"","","Hydrocarbons","Unsaturated hydrocarbons","Branched unsaturated hydrocarbons",NA,NA,NA,NA,5.6924538553796,"YS75",5.6924538553796
+"Mansonone A",233.15335,7.963,"","","Lipids and lipid-like molecules","Prenol lipids","Sesquiterpenoids",NA,NA,NA,NA,5.65763298119125,"YS75",-5.65763298119125
+"Nootkatone",219.1745,7.993,"HMDB0303909","C17914","Lipids and lipid-like molecules","Prenol lipids","Sesquiterpenoids",NA,NA,NA,NA,5.62366405771686,"YS100",-5.62366405771686
+"Spathullin B",202.0862,3.972,"","","Benzenoids","Phenols","1-hydroxy-4-unsubstituted benzenoids",NA,NA,NA,NA,5.62191586884792,"YS75",-5.62191586884792
+"Accedinisine",643.36475,8.739,"","","Unknown","","",NA,NA,NA,NA,5.61531660784416,"YS25",5.61531660784416
+"alpha-Cyperone",219.17455,7.609,"HMDB0037061","C17090","Lipids and lipid-like molecules","Prenol lipids","Sesquiterpenoids",NA,NA,NA,NA,5.60346682899848,"YS100",-5.60346682899848
+"(1R-trans)-1,2,3,4-Tetrahydro-7-hydroxy-6-methyl-4-(1-methylethyl)-1-naphthalenemethanol",235.16953,5.665,"","","Lipids and lipid-like molecules","Prenol lipids","Sesquiterpenoids",NA,NA,NA,NA,5.59044006462853,"YS50",-5.59044006462853

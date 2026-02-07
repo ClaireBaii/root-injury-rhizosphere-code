@@ -25,7 +25,7 @@ fig2_make_pca_loadings <- function(
   tic_scale_factor = 1e6,
   rsd_xlsx = NULL,
   rsd_threshold = NULL,
-  top_n_arrows = 10,
+  top_n_arrows = 5,
   top_n_bar = 30
 ) {
   fig2_require_pkgs(c("ggplot2", "grid", "ggrepel"))
@@ -149,16 +149,17 @@ fig2_make_pca_loadings <- function(
   p_biplot <- ggplot2::ggplot(scores, ggplot2::aes(x = PC1, y = PC2, color = Treatment)) +
     ggplot2::geom_hline(yintercept = 0, linewidth = 0.3, color = "grey85") +
     ggplot2::geom_vline(xintercept = 0, linewidth = 0.3, color = "grey85") +
-    ggplot2::geom_point(size = 3) +
-    ggplot2::scale_color_manual(values = treatment_cols) +
     ggplot2::geom_segment(
       data = arrows_df,
       ggplot2::aes(x = 0, y = 0, xend = PC1_scaled, yend = PC2_scaled),
       inherit.aes = FALSE,
-      arrow = grid::arrow(length = grid::unit(2, "mm")),
-      linewidth = 0.4,
-      color = "grey35"
+      arrow = grid::arrow(length = grid::unit(2.5, "mm"), type = "closed", angle = 20),
+      linewidth = 0.5,
+      color = "grey20",
+      alpha = 0.7
     ) +
+    ggplot2::geom_point(size = 3) +
+    ggplot2::scale_color_manual(values = treatment_cols) +
     ggrepel::geom_text_repel(
       data = arrows_df,
       ggplot2::aes(x = PC1_scaled, y = PC2_scaled, label = Name),

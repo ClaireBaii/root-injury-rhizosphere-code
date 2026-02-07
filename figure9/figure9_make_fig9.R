@@ -25,10 +25,14 @@ tax_rank <- "phylum" # "phylum" or "genus" (match the manuscript)
 # sPLS-DA tuning / CV
 ncomp_max <- 2
 keepX_grid <- c(5, 10, 15, 20, 25, 30)
-cv_folds <- 5
+cv_folds <- 3
 cv_repeats <- 50
 cv_dist <- "centroids.dist"
 cv_measure <- "BER"
+
+# Loadings display (main Fig.9)
+loadings_top_n <- 10
+loadings_label_cex <- 1.0
 
 # Feature list for Figure 9B / chord
 n_select_metabolites <- 15
@@ -113,13 +117,21 @@ parse_ratio_from_ys <- function(ys_sample) {
   suppressWarnings(as.integer(sub("^YS(\\d+)_.*$", "\\1", ys_sample)))
 }
 
-make_group_control_processing <- function(sample_ids) {
+make_group_ratio_5 <- function(sample_ids) {
   ratio <- vapply(sample_ids, parse_ratio_from_ys, integer(1))
   if (any(is.na(ratio))) {
     bad <- sample_ids[is.na(ratio)]
     stop("Failed to parse YS ratio from sample ids: ", paste(bad, collapse = ", "), call. = FALSE)
   }
-  factor(ifelse(ratio == 0, "Control", "Processing"), levels = c("Control", "Processing"))
+  if (any(!ratio %in% c(0, 25, 50, 75, 100))) {
+    bad <- sample_ids[!ratio %in% c(0, 25, 50, 75, 100)]
+    stop("Unexpected YS ratio (expect 0/25/50/75/100) for samples: ", paste(bad, collapse = ", "), call. = FALSE)
+  }
+  factor(
+    ratio,
+    levels = c(0, 25, 50, 75, 100),
+    labels = c("0%", "25%", "50%", "75%", "100%")
+  )
 }
 
 read_metabolome <- function(path) {
@@ -243,10 +255,75 @@ select_top_by_loading <- function(model, met_features, tax_features, met_meta, n
     met_tbl$Super_Class <- met_meta[met_tbl$Feature, "Super_Class"]
     met_tbl$Class <- met_meta[met_tbl$Feature, "Class"]
     met_tbl$Sub_Class <- met_meta[met_tbl$Feature, "Sub_Class"]
+    
+    tax_tbl$Super_Class <- NA_character_
+    tax_tbl$Class <- NA_character_
+    tax_tbl$Sub_Class <- NA_character_
   }
   out <- rbind(met_tbl, tax_tbl)
   out$Rank <- ave(out$Importance, out$Type, FUN = function(x) rank(-x, ties.method = "first"))
   out <- out[order(out$Type, out$Rank), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+make_loadings_long <- function(model, met_features, tax_features, met_meta = NULL, zero_tol = 1e-12) {
+  load <- model$loadings$X
+  if (is.null(load) || nrow(load) == 0) stop("Model loadings are empty; cannot export loadings table.", call. = FALSE)
+
+  comps <- seq_len(ncol(load))
+  out <- vector("list", length(comps))
+  names(out) <- paste0("Comp", comps)
+
+  for (j in comps) {
+    v <- load[, j]
+    ok <- is.finite(v) & (abs(v) > zero_tol)
+    if (!any(ok)) next
+
+    df <- data.frame(
+      Feature = rownames(load)[ok],
+      Component = j,
+      Loading = unname(v[ok]),
+      AbsLoading = abs(unname(v[ok])),
+      stringsAsFactors = FALSE
+    )
+    df <- df[order(df$AbsLoading, decreasing = TRUE), , drop = FALSE]
+    df$RankAbs <- seq_len(nrow(df))
+    df$Type <- ifelse(df$Feature %in% met_features, "Metabolite",
+      ifelse(df$Feature %in% tax_features, "Taxon", "Other")
+    )
+
+    if (!is.null(met_meta) && nrow(met_meta) > 0) {
+      df$Super_Class <- NA_character_
+      df$Class <- NA_character_
+      df$Sub_Class <- NA_character_
+
+      met_rows <- df$Type == "Metabolite" & df$Feature %in% rownames(met_meta)
+      if (any(met_rows)) {
+        df$Super_Class[met_rows] <- met_meta[df$Feature[met_rows], "Super_Class"]
+        df$Class[met_rows] <- met_meta[df$Feature[met_rows], "Class"]
+        df$Sub_Class[met_rows] <- met_meta[df$Feature[met_rows], "Sub_Class"]
+      }
+    }
+
+    out[[j]] <- df
+  }
+
+  out <- do.call(rbind, out)
+  if (is.null(out) || nrow(out) == 0) {
+    out <- data.frame(
+      Feature = character(0),
+      Component = integer(0),
+      Loading = numeric(0),
+      AbsLoading = numeric(0),
+      RankAbs = integer(0),
+      Type = character(0),
+      Super_Class = character(0),
+      Class = character(0),
+      Sub_Class = character(0),
+      stringsAsFactors = FALSE
+    )
+  }
   rownames(out) <- NULL
   out
 }
@@ -305,18 +382,16 @@ plot_chord <- function(links, sector_order, grid_col, fc_vec, title_text, n_met,
   suppressPackageStartupMessages(library(circlize))
 
   circos.clear()
-  n_tax <- length(sector_order) - n_met
-  if (!is.finite(n_met) || n_met < 1 || n_tax < 1) {
-    stop("Invalid n_met/n_tax for chord sectors.", call. = FALSE)
+  
+  # Get actual sectors from links data
+  actual_sectors <- unique(c(links$Metabolite, links$Taxon))
+  
+  if (length(actual_sectors) < 2) {
+    stop("Too few sectors for chord diagram.", call. = FALSE)
   }
+  
   circos.par(
     start.degree = 90,
-    gap.after = c(
-      rep(1.2, n_met - 1),
-      8,
-      rep(0.8, n_tax - 1),
-      8
-    ),
     track.margin = c(0.005, 0.005),
     canvas.xlim = c(-1.6, 1.6),
     canvas.ylim = c(-1.25, 1.25)
@@ -327,10 +402,12 @@ plot_chord <- function(links, sector_order, grid_col, fc_vec, title_text, n_met,
   link_lwd[!is.finite(link_lwd)] <- 0.6
   link_lwd[abs(links$rho) >= highlight_abs_rho] <- link_lwd[abs(links$rho) >= highlight_abs_rho] * 1.6
 
+  # Filter grid.col to only include actual sectors
+  grid_col_filtered <- grid_col[names(grid_col) %in% actual_sectors]
+  
   chordDiagram(
     x = links[, c("Metabolite", "Taxon", "rho")],
-    order = sector_order,
-    grid.col = grid_col,
+    grid.col = grid_col_filtered,
     col = link_cols,
     link.lwd = link_lwd,
     transparency = 0.12,
@@ -398,7 +475,7 @@ plot_chord <- function(links, sector_order, grid_col, fc_vec, title_text, n_met,
     x = 1.05, y = 0.75,
     legend = c(sprintf("-%.1f", fc_lim), "0", sprintf("+%.1f", fc_lim)),
     fill = c(fc_colors(-fc_lim), fc_colors(0), fc_colors(fc_lim)),
-    title = "log2FC\n(Processing vs Control)",
+    title = "log2FC\n(mean 25-100% vs 0%)",
     bty = "n",
     cex = 0.75
   )
@@ -434,6 +511,29 @@ suppressPackageStartupMessages({
   library(mixOmics)
 })
 
+## -------------------- mixOmics sandbox compatibility --------------------
+# In some sandboxed environments, `parallel::detectCores()` can return NA
+# (e.g. sysctl blocked on macOS), which triggers an NA comparison inside
+# mixOmics' internal `.check_cpus()` and aborts tuning/perf.
+if (is.na(suppressWarnings(parallel::detectCores()))) {
+  message("Note: parallel::detectCores() returned NA; patching mixOmics .check_cpus() for this session (cpus=1).")
+  assignInNamespace(
+    ".check_cpus",
+    function(cpus) {
+      if (is.null(cpus) || length(cpus) != 1 || !is.numeric(cpus) || is.na(cpus) || cpus <= 0) {
+        stop("Number of CPUs should be a positive integer.", call. = FALSE)
+      }
+      cores <- suppressWarnings(parallel::detectCores())
+      if (is.na(cores) || !is.finite(cores) || cores < 1) cores <- as.integer(cpus)
+      if (cpus > cores) {
+        message(sprintf("\nOnly %s CPUs available for parallel processing.\n", cores))
+      }
+      as.integer(cpus)
+    },
+    ns = "mixOmics"
+  )
+}
+
 ## -------------------- IO paths --------------------
 script_dir <- get_script_dir()
 project_root <- find_project_root(script_dir)
@@ -458,7 +558,8 @@ X_met_raw <- met$x_raw[common_samples, , drop = FALSE]
 
 # Combine for sPLS-DA (metabolome + aggregated microbiome)
 X <- cbind(X_met, X_tax)
-Y <- make_group_control_processing(rownames(X))
+Y <- make_group_ratio_5(rownames(X))
+message("Group counts: ", paste(names(table(Y)), as.integer(table(Y)), sep = "=", collapse = ", "))
 
 met_features <- colnames(X_met)
 tax_features <- colnames(X_tax)
@@ -488,8 +589,26 @@ tune <- tune.splsda(
   progressBar = TRUE
 )
 
-best_ncomp <- if (!is.null(tune$choice.ncomp)) tune$choice.ncomp else ncomp_max
+if (!is.null(tune$choice.ncomp)) {
+  if (is.list(tune$choice.ncomp) && "ncomp" %in% names(tune$choice.ncomp)) {
+    best_ncomp <- tune$choice.ncomp$ncomp[1]
+  } else {
+    best_ncomp <- tune$choice.ncomp
+  }
+} else {
+  best_ncomp <- ncomp_max
+}
+
+# Force ncomp=2 for visualization
+if (best_ncomp < 2) {
+  best_ncomp <- 2
+}
+
 best_keepX <- tune$choice.keepX
+if (is.list(best_keepX)) best_keepX <- unlist(best_keepX)
+if (length(best_keepX) < best_ncomp) {
+  best_keepX <- c(best_keepX, rep(tail(best_keepX, 1), best_ncomp - length(best_keepX)))
+}
 best_keepX <- best_keepX[seq_len(best_ncomp)]
 
 spls_model <- splsda(X, Y, ncomp = best_ncomp, keepX = best_keepX, scale = TRUE)
@@ -504,14 +623,19 @@ perf_res <- perf(
 )
 
 ## -------------------- outputs: CV + tuning table --------------------
-pdf(file.path(out_dir, "FigS9_splsda_CV.pdf"), width = 8.5, height = 6, useDingbats = FALSE)
-par(mfrow = c(1, 1), mar = c(4, 4, 4, 1))
-plot(tune)
-title(sprintf("sPLS-DA tuning (M-fold CV: folds=%d, repeats=%d; measure=%s; dist=%s)", cv_folds, cv_repeats, cv_measure, cv_dist), line = 2)
-plot(perf_res)
-title(sprintf("sPLS-DA performance (M-fold CV: folds=%d, repeats=%d; dist=%s)", cv_folds, cv_repeats, cv_dist), line = 2)
+pdf(file.path(out_dir, "FigS9_splsda_CV.pdf"), width = 10, height = 8, useDingbats = FALSE)
+par(mfrow = c(1, 2), mar = c(4, 4, 4, 1))
+try({
+  plot(tune)
+  mtext(sprintf("M-fold CV: folds=%d, repeats=%d, measure=%s, dist=%s", cv_folds, cv_repeats, cv_measure, cv_dist), side = 3, line = 0.5, cex = 0.8)
+}, silent = TRUE)
+try({
+  plot(perf_res)
+  mtext(sprintf("M-fold CV: folds=%d, repeats=%d, dist=%s", cv_folds, cv_repeats, cv_dist), side = 3, line = 0.5, cex = 0.8)
+}, silent = TRUE)
 dev.off()
 
+# Detailed tuning results table
 tuning_tbl <- data.frame(
   choice_ncomp = best_ncomp,
   component = seq_len(best_ncomp),
@@ -523,6 +647,35 @@ tuning_tbl <- data.frame(
   stringsAsFactors = FALSE
 )
 write.csv(tuning_tbl, file.path(out_dir, "splsda_tuning_results.csv"), row.names = FALSE)
+
+# Export detailed CV tuning grid for Table S
+cv_detail <- try({
+  # Extract error rates from tune object
+  err <- tune$error.rate
+  if (!is.null(err)) {
+    err_df <- as.data.frame(err)
+    err_df$keepX <- rownames(err_df)
+    err_df$cv_folds <- cv_folds
+    err_df$cv_repeats <- cv_repeats
+    err_df$cv_dist <- cv_dist
+    err_df$cv_measure <- cv_measure
+    err_df
+  } else {
+    NULL
+  }
+}, silent = TRUE)
+if (!inherits(cv_detail, "try-error") && !is.null(cv_detail)) {
+  write.csv(cv_detail, file.path(out_dir, "TableS_CV_tuning.csv"), row.names = FALSE)
+}
+
+## -------------------- outputs: loadings table (Table S) --------------------
+loadings_tbl <- make_loadings_long(
+  spls_model,
+  met_features = met_features,
+  tax_features = tax_features,
+  met_meta = met$meta
+)
+write.csv(loadings_tbl, file.path(out_dir, "FigS9_splsda_loadings_nonzero.csv"), row.names = FALSE)
 
 ## -------------------- outputs: selected features --------------------
 selected_tbl <- select_top_by_loading(
@@ -547,73 +700,241 @@ if (ncol(tax_sel) < 2) stop("Too few selected taxa for chord after intersection.
 links_sig <- compute_links(met_sel, tax_sel, rho_cutoff = rho_threshold, q_cutoff = q_threshold)
 write.csv(links_sig, file.path(out_dir, "FigS9_chord_links.csv"), row.names = FALSE)
 
+## -------------------- Chord label mapping (short codes) --------------------
+# Create short codes for readability: M1...Mn for metabolites, T1...Tm for taxa
+# Use actual column names from met_sel/tax_sel (which are used in links_sig)
+met_names_chord <- colnames(met_sel)
+tax_names_chord <- colnames(tax_sel)
+met_codes <- setNames(paste0("M", seq_along(met_names_chord)), met_names_chord)
+tax_codes <- setNames(paste0("T", seq_along(tax_names_chord)), tax_names_chord)
+all_codes <- c(met_codes, tax_codes)
+
+# Create label mapping table for Table S
+label_map <- data.frame(
+  ShortCode = c(met_codes, tax_codes),
+  FullName = c(met_names_chord, tax_names_chord),
+  Type = c(rep("Metabolite", length(met_names_chord)), rep("Taxon", length(tax_names_chord))),
+  stringsAsFactors = FALSE
+)
+# Add metabolite class info
+label_map$SuperClass <- NA_character_
+met_in_meta <- met_names_chord[met_names_chord %in% rownames(met$meta)]
+if (length(met_in_meta) > 0) {
+  label_map$SuperClass[label_map$FullName %in% met_in_meta] <- met$meta[met_in_meta, "Super_Class"]
+}
+write.csv(label_map, file.path(out_dir, "TableS_chord_labels.csv"), row.names = FALSE)
+
+# Create mapped links for chord (use short codes)
+links_mapped <- links_sig
+links_mapped$Metabolite <- met_codes[links_sig$Metabolite]
+links_mapped$Taxon <- tax_codes[links_sig$Taxon]
+
+# Debug: Check if any mapping failed (NA values)
+if (any(is.na(links_mapped$Metabolite))) {
+  message("WARNING: Some metabolite names not found in mapping:")
+  message("  Not found: ", paste(links_sig$Metabolite[is.na(links_mapped$Metabolite)], collapse = ", "))
+  message("  Available: ", paste(names(met_codes), collapse = ", "))
+}
+if (any(is.na(links_mapped$Taxon))) {
+  message("WARNING: Some taxon names not found in mapping:")
+  message("  Not found: ", paste(links_sig$Taxon[is.na(links_mapped$Taxon)], collapse = ", "))
+  message("  Available: ", paste(names(tax_codes), collapse = ", "))
+}
+message("Chord sectors (first 5): ", paste(head(unique(c(links_mapped$Metabolite, links_mapped$Taxon)), 5), collapse = ", "))
+
 ## -------------------- main figure: A (scores) + B (loadings) + C (chord) --------------------
 # sector colors: metabolites by Super_Class, taxa grey
-met_super <- met$meta[sel_met, "Super_Class"]
-met_super[is.na(met_super) | !nzchar(met_super)] <- "Unknown"
+# Note: Use met_names_chord/tax_names_chord for consistency with short codes
+met_super <- rep("Unknown", length(met_names_chord))
+names(met_super) <- met_names_chord
+met_in_meta <- met_names_chord[met_names_chord %in% rownames(met$meta)]
+if (length(met_in_meta) > 0) {
+  met_super[met_in_meta] <- met$meta[met_in_meta, "Super_Class"]
+  met_super[is.na(met_super) | !nzchar(met_super)] <- "Unknown"
+}
 classes <- unique(met_super)
 class_cols <- setNames(grDevices::hcl.colors(length(classes), palette = "Dark 3"), classes)
-met_cols <- setNames(class_cols[met_super], sel_met)
-tax_cols <- setNames(rep("grey80", length(sel_tax)), sel_tax)
-grid_col <- c(met_cols, tax_cols)
+# Use short codes for colors (met_codes values are M1, M2, etc.)
+met_cols <- setNames(class_cols[met_super], met_codes[met_names_chord])
+tax_cols <- setNames(rep("grey80", length(tax_names_chord)), tax_codes[tax_names_chord])
+grid_col_all <- c(met_cols, tax_cols)
 
-# log2FC (Processing vs Control) for metabolites
+# log2FC for metabolites: mean(25-100%) vs 0% (Control)
 ctrl_samples <- grep("^YS0_", common_samples, value = TRUE)
 proc_samples <- setdiff(common_samples, ctrl_samples)
 eps <- 1e-5
-mean_proc <- colMeans(X_met_raw[proc_samples, sel_met, drop = FALSE])
-mean_ctrl <- colMeans(X_met_raw[ctrl_samples, sel_met, drop = FALSE])
+# Use met_sel which contains the actual data columns
+mean_proc <- colMeans(X_met_raw[proc_samples, met_names_chord, drop = FALSE])
+mean_ctrl <- colMeans(X_met_raw[ctrl_samples, met_names_chord, drop = FALSE])
 log2fc <- log2((mean_proc + eps) / (mean_ctrl + eps))
 
-sector_order <- c(sel_met, sel_tax)
-fc_vec <- rep(NA_real_, length(sector_order))
-names(fc_vec) <- sector_order
-fc_vec[sel_met] <- log2fc[sel_met]
+# Use short codes for sector_order and fc_vec
+sector_order_all <- c(met_codes[met_names_chord], tax_codes[tax_names_chord])
+fc_vec_all <- rep(NA_real_, length(sector_order_all))
+names(fc_vec_all) <- sector_order_all
+fc_vec_all[met_codes[met_names_chord]] <- log2fc
 
-plot_main <- function() {
+# Filter to only sectors actually present in links_mapped (for chordDiagram)
+chord_sectors <- unique(c(links_mapped$Metabolite, links_mapped$Taxon))
+sector_order <- sector_order_all[sector_order_all %in% chord_sectors]
+grid_col <- grid_col_all[sector_order]
+fc_vec <- fc_vec_all[sector_order]
+
+
+## -------------------- Plot A: sPLS-DA Scores --------------------
+plot_A <- function() {
   op <- par(no.readonly = TRUE)
   on.exit(par(op), add = TRUE)
-
-  layout(
-    matrix(c(1, 2, 3,
-      4, 4, 4
-    ), nrow = 2, byrow = TRUE),
-    heights = c(1, 1.45)
-  )
-
-  # A: scores
-  par(mar = c(4, 4, 3.5, 1))
+  
+  par(mar = c(4.5, 4.5, 3.5, 1))
   plotIndiv(
     spls_model,
-    comp = 1:2,
+    comp = if (best_ncomp >= 2) 1:2 else 1,
     group = Y,
     ind.names = FALSE,
-    ellipse = TRUE,
+    ellipse = if (best_ncomp >= 2) TRUE else FALSE,
     legend = TRUE,
-    title = sprintf("A  sPLS-DA scores (ncomp=%d; keepX=%s)", best_ncomp, paste(best_keepX, collapse = ", "))
+    title = sprintf("sPLS-DA scores (ncomp=%d; keepX=%s)", best_ncomp, paste(best_keepX, collapse = ", "))
   )
+}
 
-  # B: loadings (Comp1)
-  par(mar = c(4, 4, 3.5, 1))
+pdf(file.path(out_dir, "Fig9A_scores.pdf"), width = 7, height = 6, useDingbats = FALSE)
+plot_A()
+dev.off()
+
+tiff(file.path(out_dir, "Fig9A_scores.tiff"), width = 7, height = 6, units = "in", res = 600, compression = "lzw")
+plot_A()
+dev.off()
+
+## -------------------- Plot B: Loadings (Comp1 + Comp2) --------------------
+plot_B <- function() {
+  op <- par(no.readonly = TRUE)
+  on.exit(par(op), add = TRUE)
+  
+  par(mfrow = c(1, 2))
+  
+  # Comp 1 loadings
+  par(mar = c(5, 18, 4, 2))
   plotLoadings(
     spls_model,
     comp = 1,
     method = "mean",
     contrib = "max",
-    ndisplay = 20,
-    title = "B  Loadings (Comp 1)"
+    ndisplay = min(loadings_top_n, best_keepX[1]),
+    size.name = loadings_label_cex,
+    name.var = substring(colnames(spls_model$X), 1, 30),
+    legend = FALSE,  # Remove misleading Outcome legend
+    title = sprintf("Loadings Comp 1 (keepX=%d; Top %d shown)", best_keepX[1], min(loadings_top_n, best_keepX[1]))
   )
-
-  # B: loadings (Comp2; if exists)
-  par(mar = c(4, 4, 3.5, 1))
+  
+  # Comp 2 loadings
+  par(mar = c(5, 18, 4, 2))
   if (best_ncomp >= 2) {
     plotLoadings(
       spls_model,
       comp = 2,
       method = "mean",
       contrib = "max",
-      ndisplay = 20,
-      title = "B  Loadings (Comp 2)"
+      ndisplay = min(loadings_top_n, best_keepX[2]),
+      size.name = loadings_label_cex,
+      name.var = substring(colnames(spls_model$X), 1, 30),
+      legend = FALSE,  # Remove misleading Outcome legend
+      title = sprintf("Loadings Comp 2 (keepX=%d; Top %d shown)", best_keepX[2], min(loadings_top_n, best_keepX[2]))
+    )
+  } else {
+    plot.new()
+    text(0.5, 0.5, "Comp 2 not used (choice.ncomp = 1)")
+  }
+}
+
+pdf(file.path(out_dir, "Fig9B_loadings.pdf"), width = 14, height = 6, useDingbats = FALSE)
+plot_B()
+dev.off()
+
+tiff(file.path(out_dir, "Fig9B_loadings.tiff"), width = 14, height = 6, units = "in", res = 600, compression = "lzw")
+plot_B()
+dev.off()
+
+## -------------------- Plot C: Chord Diagram --------------------
+plot_C <- function() {
+  op <- par(no.readonly = TRUE)
+  on.exit(par(op), add = TRUE)
+  
+  par(mar = c(1, 1, 3, 1))
+  plot_chord(
+    links = links_mapped,  # Use short codes
+    sector_order = sector_order,
+    grid_col = grid_col,
+    fc_vec = fc_vec,
+    title_text = sprintf("Chord (Spearman; |rho|>%.1f, q<%.2f; see Table S for labels)", rho_threshold, q_threshold),
+    n_met = length(sel_met),
+    class_colors = class_cols
+  )
+}
+
+pdf(file.path(out_dir, "Fig9C_chord.pdf"), width = 10, height = 8, useDingbats = FALSE)
+plot_C()
+dev.off()
+
+tiff(file.path(out_dir, "Fig9C_chord.tiff"), width = 10, height = 8, units = "in", res = 600, compression = "lzw")
+plot_C()
+dev.off()
+
+## -------------------- Main Fig.9 (A + B1/B2 + C) --------------------
+plot_main <- function() {
+  op <- par(no.readonly = TRUE)
+  on.exit(par(op), add = TRUE)
+
+  layout(
+    matrix(
+      c(
+        1, 1,
+        2, 3,
+        4, 4
+      ),
+      nrow = 3,
+      byrow = TRUE
+    ),
+    heights = c(1, 1, 1.6)
+  )
+
+  # A: scores
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  plotIndiv(
+    spls_model,
+    comp = if (best_ncomp >= 2) 1:2 else 1,
+    group = Y,
+    ind.names = FALSE,
+    ellipse = if (best_ncomp >= 2) TRUE else FALSE,
+    legend = TRUE,
+    title = sprintf("A  sPLS-DA scores (ncomp=%d; keepX=%s)", best_ncomp, paste(best_keepX, collapse = ", "))
+  )
+
+  # B1: loadings (Comp1)
+  par(mar = c(5, 18, 4, 2))
+  plotLoadings(
+    spls_model,
+    comp = 1,
+    method = "mean",
+    contrib = "max",
+    ndisplay = min(loadings_top_n, best_keepX[1]),
+    size.name = loadings_label_cex,
+    name.var = substring(colnames(spls_model$X), 1, 30),
+    title = "B1  Loadings (Comp 1)"
+  )
+
+  # B2: loadings (Comp2; if exists)
+  par(mar = c(5, 18, 4, 2))
+  if (best_ncomp >= 2) {
+    plotLoadings(
+      spls_model,
+      comp = 2,
+      method = "mean",
+      contrib = "max",
+      ndisplay = min(loadings_top_n, best_keepX[2]),
+      size.name = loadings_label_cex,
+      name.var = substring(colnames(spls_model$X), 1, 30),
+      title = "B2  Loadings (Comp 2)"
     )
   } else {
     plot.new()
@@ -637,14 +958,7 @@ pdf(file.path(out_dir, "Fig9_main.pdf"), width = 12, height = 8.5, useDingbats =
 plot_main()
 dev.off()
 
-tiff(
-  file.path(out_dir, "Fig9_main.tiff"),
-  width = 12,
-  height = 8.5,
-  units = "in",
-  res = 600,
-  compression = "lzw"
-)
+tiff(file.path(out_dir, "Fig9_main.tiff"), width = 12, height = 8.5, units = "in", res = 600, compression = "lzw")
 plot_main()
 dev.off()
 

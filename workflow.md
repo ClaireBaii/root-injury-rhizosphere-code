@@ -94,7 +94,7 @@ cd scripts-for-figures
 
 ---
 
-## D. 安装 Conda（推荐 Miniforge）并用 environment.yml 配 R 环境
+## D. 安装 Conda（推荐 Miniforge）并用 environment.yaml 配 R 环境
 
 ### D1) 安装 Miniforge（推荐）或 Miniconda
 
@@ -129,7 +129,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 ## E. 在项目里创建 conda 环境并确认 R 可用
 
-### E1) 找到 environment.yml 并创建环境
+### E1) 找到 environment.yaml 并创建环境
 
 在仓库根目录：
 
@@ -138,17 +138,18 @@ cd D:\work\scripts-for-figures
 dir
 ```
 
-如果看到 `environment.yml`：
+如果看到 `environment.yaml`：
 
 ```powershell
-conda env create -f environment.yml
+conda env create -f environment.yaml
 conda env list
 ```
 
-激活环境（环境名以 yml 的 `name:` 为准）：
+本项目 conda 环境名在 `environment.yaml` 的 `name:` 字段里，当前是 `paper_fig_env`。
+激活环境：
 
 ```powershell
-conda activate <env_name>
+conda activate paper_fig_env
 ```
 
 验证 R：
@@ -162,7 +163,7 @@ Rscript --version
 ### E2)（可选）环境已存在就更新（更稳）
 
 ```powershell
-conda env update -f environment.yml --prune
+conda env update -f environment.yaml --prune
 ```
 
 ### E3)（可选）若 conda 下载慢/失败：让 conda 走 Clash
@@ -216,7 +217,7 @@ where R
 在 Antigravity 终端里：
 
 ```powershell
-conda activate <env_name>
+conda activate paper_fig_env
 cd D:\work\scripts-for-figures
 Rscript path\to\your_script.R
 ```
@@ -252,7 +253,7 @@ git commit -m "Improve figure aesthetics: <简述>"
 如果你想不依赖项目脚本，先做一次最小测试（排除图形设备问题）：
 
 ```powershell
-conda activate <env_name>
+conda activate paper_fig_env
 Rscript -e "png('test.png', width=2000, height=1500, res=300); plot(1:10); dev.off()"
 dir test.png
 ```
@@ -267,8 +268,7 @@ dir test.png
 2. `git ls-remote` 测仓库可达
 3. `git clone` 到 `D:\work`
 4. 安装 conda（Miniforge/Miniconda）→ `conda init powershell` → 重开
-5. `conda env create -f environment.yml` → `conda activate` → `where R`
+5. `conda env create -f environment.yaml` → `conda activate paper_fig_env` → `where R`
 6. Antigravity 配 `r.rterm.windows` 指向 conda env 的 `R.exe`
 7. 终端里 `Rscript xxx.R` 跑项目出图
 8. 开分支 `improve-fig-style` → 用 AI 小步改 → 跑 → 对比 → commit
-

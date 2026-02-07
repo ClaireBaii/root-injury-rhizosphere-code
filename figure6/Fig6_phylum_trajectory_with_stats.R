@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 
 suppressPackageStartupMessages({
-  required_pkgs <- c("dplyr", "ggplot2", "tidyr")
+  required_pkgs <- c("dplyr", "ggplot2", "tidyr", "patchwork")
   missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
   if (length(missing_pkgs) > 0) {
     stop(
@@ -17,6 +17,7 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
   library(tidyr)
+  library(patchwork)
 })
 
 get_script_dir <- function() {
@@ -197,6 +198,9 @@ summary_plot <- summary_df %>%
     sd_pct = sd * 100
   )
 
+# Verify if data scale is reasonable for percentage (often 0.1-10% for common phyla)
+# Note: mean_pct is already expressed in percent.
+
 safe_kw_p <- function(values, groups) {
   ok <- !is.na(values) & !is.na(groups)
   values <- values[ok]
@@ -318,41 +322,77 @@ fig_h <- max(4.8, nrow_facets * 2.2)
 
 caption_text <- paste(
   "Treatment-level mean across trees (n=3); error bars indicate ±SD.",
-  "P-values: Kruskal–Wallis across treatments; BH-adjusted across plotted phyla."
+  "P-values: Kruskal–Wallis across treatments; BH-adjusted across plotted phyla.",
+  "Relative abundance was expressed in percent."
 )
 
-p <- ggplot(summary_plot, aes(x = RS, y = mean_pct, group = 1)) +
-  geom_line(linewidth = 0.4, color = "grey30") +
-  geom_pointrange(
-    aes(ymin = pmax(mean_pct - sd_pct, 0), ymax = mean_pct + sd_pct),
-    linewidth = 0.35,
-    fatten = 1.4
-  ) +
-  geom_text(
-    data = annot_df,
-    aes(x = RS, y = y, label = label),
-    inherit.aes = FALSE,
-    hjust = 1,
-    vjust = 1,
-    size = 3.0
-  ) +
-  facet_wrap(~Phylum, scales = "free_y", ncol = ncol_facets) +
-  scale_y_continuous(labels = function(x) sprintf("%.1f", x)) +
-  labs(
-    x = "RS (%)",
-    y = "Relative abundance (%)",
-    title = "Figure 6. Phylum relative abundance trajectories",
-    subtitle = selection_note,
-    caption = caption_text
-  ) +
-  theme_bw(base_size = 11) +
-  theme(
-    axis.text.x = element_text(angle = 0, vjust = 0.5),
-    strip.text = element_text(face = "bold"),
-    plot.title = element_text(face = "bold"),
-    plot.caption = element_text(size = 9)
-  )
+plot_list <- lapply(seq_along(phyla_to_plot), function(i) {
+  pyl <- phyla_to_plot[i]
+  p_data <- summary_plot %>% filter(Phylum == pyl)
+  p_annot <- annot_df %>% filter(Phylum == pyl)
+  
+  # Base plot for each phylum
+  p_sub <- ggplot(p_data, aes(x = RS, y = mean_pct, group = 1)) +
+    geom_line(linewidth = 0.5, color = "grey30") +
+    geom_pointrange(
+      aes(ymin = pmax(mean_pct - sd_pct, 0), ymax = mean_pct + sd_pct),
+      linewidth = 0.4,
+      fatten = 1.6
+    ) +
+    geom_text(
+      data = p_annot,
+      aes(x = RS, y = y, label = label),
+      inherit.aes = FALSE,
+      hjust = 1,
+      vjust = 1,
+      size = 4.2
+    ) +
+    scale_y_continuous(labels = function(x) sprintf("%.1f", x)) +
+    labs(
+      x = "RS (%)",
+      y = "Rel. abundance (%)",
+      title = pyl
+    ) +
+    theme_bw(base_size = 13) +
+    theme(
+      axis.text.x = element_text(angle = 0, vjust = 0.5),
+      panel.grid = element_blank(),
+      plot.title = element_text(face = "bold", size = 12, hjust = 0.5),
+      # Remove axis labels for cleaner look in assembly if needed, 
+      # but since it's 3+2, we keep them for all.
+      plot.margin = margin(5, 5, 5, 5)
+    )
+  
+  # Conditional axis labels to reduce clutter if preferred, 
+  # but user wanted "no big white space" and "journal style".
+  # For 3+2, usually each plot is self-contained.
+  p_sub
+})
 
+# Assemble with patchwork for 3+2 centered layout
+# We use a design grid of 6 columns to center 2 plots under 3.
+n_p <- length(plot_list)
+if (n_p == 5) {
+  # Row 1: 3 plots (each 2 units wide) -> 1,1, 2,2, 3,3
+  # Row 2: 2 plots centered (each 2 units wide, skip 1 unit) -> #, 4,4, 5,5, #
+  design <- "
+    112233
+    #4455#
+  "
+  p <- wrap_plots(plot_list, design = design)
+} else {
+  # Fallback for other counts
+  p <- wrap_plots(plot_list, ncol = 3)
+}
+
+# Add shared caption/note as a footnote if desired, 
+# but user asked to CANCEL caption and title.
+# However, the footnote clarifying units was requested earlier.
+# I will add it as a plot_annotation if it doesn't count as a "caption".
+# Actually, I'll stick to the "no caption" request but keep the units in axis.
+
+fig_w <- 11
+fig_h <- if (n_p <= 3) 4 else 8
 pdf_path <- file.path(out_dir, "Fig6_main.pdf")
 tiff_path <- file.path(out_dir, "Fig6_main.tiff")
 

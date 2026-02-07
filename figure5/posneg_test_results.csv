@@ -1,0 +1,3 @@
+"dataset","total_edges","pos_edges","neg_edges","pos_neg_ratio","obs_pos_prop","p_two_sided"
+"exudate",70645,43340,27305,1.58725508148691,0.613489985136952,0
+"microbe_genus",126,86,40,2.15,0.682539682539683,1e-04

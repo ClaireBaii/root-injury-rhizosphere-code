@@ -1,0 +1,3 @@
+"dataset","thr_high","thr_low","modularity_high","modularity_low","avg_degree_high","avg_degree_low","edges_high","edges_low","nodes_high","nodes_low","modularity_delta","hub_top_n","hub_overlap_n","hub_jaccard"
+"exudate",0.7,0.5,0.502255223827242,0.437844653568919,176.617859123683,202.570801317234,159221,184542,1803,1822,-0.0644105702583231,8,2,0.142857142857143
+"microbe_genus",0.7,0.5,0.691080176557232,0.598875789674803,4.71794871794872,6.3,92,126,39,40,-0.0922043868824286,8,5,0.454545454545455

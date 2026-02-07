@@ -11,6 +11,7 @@
 suppressPackageStartupMessages({
   library(vegan)
   library(ggplot2)
+  library(patchwork)
 })
 
 get_script_dir <- function() {
@@ -138,8 +139,11 @@ proc <- procrustes(pca_scores, pcoa_scores, symmetric = TRUE)
 prot <- protest(pca_scores, pcoa_scores, permutations = 10000, symmetric = TRUE)
 
 m2 <- proc$ss
-p_text <- format.pval(prot$signif, digits = 3, eps = 1e-4)
-subtitle <- sprintf("m^2 = %.2f, P = %s (PROTEST, 10,000 permutations)", m2, p_text)
+p_val <- prot$signif
+p_text <- if (p_val < 0.001) "< 0.001" else sprintf("= %.3f", p_val)
+
+# Proper mathematical subtitle using bquote
+subtitle_expr <- bquote(italic(m)^2 == .(round(m2, 2)) * "," ~ italic(P) ~ .(p_text) ~ "(PROTEST, 10,000 permutations)")
 
 plot_df <- data.frame(
   Sample = rownames(proc$X),
@@ -157,53 +161,90 @@ plot_df$Group <- factor(
   labels = c("0%", "25%", "50%", "75%", "100%")
 )
 
+# Professional color palette (NPG-inspired)
+col_palette <- c(
+  "0%"   = "#E64B35FF", 
+  "25%"  = "#4DBBD5FF", 
+  "50%"  = "#00A087FF", 
+  "75%"  = "#3C3C3CFF", 
+  "100%" = "#F39B7FFF"
+)
+
 p_main <- ggplot(plot_df) +
   geom_segment(
     aes(x = X1, y = X2, xend = Y1, yend = Y2, color = Group),
-    arrow = grid::arrow(length = grid::unit(0.12, "cm")),
-    linewidth = 0.5,
-    alpha = 0.85
+    arrow = grid::arrow(length = grid::unit(0.12, "cm"), type = "closed"),
+    linewidth = 0.4,
+    alpha = 0.7,
+    show.legend = FALSE
   ) +
-  geom_point(aes(x = X1, y = X2, fill = Group), shape = 21, size = 3.2, color = "black", stroke = 0.3) +
-  geom_point(aes(x = Y1, y = Y2, fill = Group), shape = 24, size = 3.2, color = "black", stroke = 0.3) +
+  # Metabolome
+  geom_point(aes(x = X1, y = X2, fill = Group, shape = "Exudates"), size = 3.5, color = "black", stroke = 0.4) +
+  # Microbiome
+  geom_point(aes(x = Y1, y = Y2, fill = Group, shape = "Microbiota"), size = 3.5, color = "black", stroke = 0.4) +
+  scale_fill_manual(values = col_palette) +
+  scale_color_manual(values = col_palette) +
+  scale_shape_manual(values = c("Exudates" = 21, "Microbiota" = 24)) +
   coord_equal() +
   labs(
-    title = "Procrustes: Metabolome PCA vs Microbiome PCoA (Bray–Curtis)",
-    subtitle = subtitle,
+    title = "Procrustes Alignment",
     x = "Dimension 1",
     y = "Dimension 2",
     fill = "Treatment",
-    color = "Treatment"
+    shape = "Data Type"
   ) +
-  theme_minimal(base_size = 12) +
-  theme(panel.grid.minor = element_blank(), legend.position = "right")
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21), order = 1),
+    shape = guide_legend(override.aes = list(fill = "grey80"), order = 2)
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", size = 13)
+  )
 
-ggsave(file.path(out_dir, "Fig8_main.pdf"), plot = p_main, width = 7, height = 6, units = "in")
+p_resid <- ggplot(plot_df, aes(x = Group, y = ArrowLength, fill = Group)) +
+  geom_boxplot(outlier.shape = NA, linewidth = 0.5, alpha = 0.3, color = "black") +
+  geom_jitter(aes(color = Group), width = 0.2, size = 2.5, alpha = 0.8) +
+  scale_fill_manual(values = col_palette) +
+  scale_color_manual(values = col_palette) +
+  labs(
+    title = "Procrustes Residuals",
+    x = "Treatment",
+    y = "Residual Distance (Arrow Length)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.2, color = "grey90"),
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 13)
+  )
+
+# Merge using patchwork with collected legends
+p_combined <- wrap_plots(p_main, p_resid, widths = c(1.3, 1)) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    subtitle = subtitle_expr,
+    tag_levels = 'A',
+    theme = theme(
+      plot.subtitle = element_text(size = 11, color = "grey30", margin = margin(b = 10)),
+      plot.tag = element_text(face = "bold", size = 15)
+    )
+  )
+
+out_file_base <- file.path(out_dir, "Fig8_combined")
+ggsave(paste0(out_file_base, ".pdf"), plot = p_combined, width = 11, height = 5.2, units = "in")
 ggsave(
-  file.path(out_dir, "Fig8_main.tiff"),
-  plot = p_main,
-  width = 7,
-  height = 6,
+  paste0(out_file_base, ".tiff"),
+  plot = p_combined,
+  width = 11,
+  height = 5.2,
   units = "in",
   dpi = 600,
   compression = "lzw"
 )
 
-make_supplement <- TRUE
-if (isTRUE(make_supplement)) {
-  p_resid <- ggplot(plot_df, aes(x = Group, y = ArrowLength, color = Group)) +
-    geom_boxplot(outlier.shape = NA, linewidth = 0.6, alpha = 0.12) +
-    geom_jitter(width = 0.15, size = 2, alpha = 0.85) +
-    labs(
-      title = "Procrustes residuals (arrow length)",
-      subtitle = subtitle,
-      x = "Treatment",
-      y = "Arrow length"
-    ) +
-    theme_minimal(base_size = 12) +
-    theme(panel.grid.minor = element_blank(), legend.position = "none")
-
-  ggsave(file.path(out_dir, "FigS8_procrustes_residuals.pdf"), plot = p_resid, width = 7, height = 4, units = "in")
-}
-
-message("Done. Outputs written to: ", out_dir)
+message("Done. Combined outputs written to: ", out_dir)

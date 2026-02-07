@@ -9,25 +9,25 @@
 top_n_main <- 27
 make_full_supp <- TRUE
 
-# RDYS_1..5 ↔ treatment labels (match metabolome sample labels YS0/25/50/75/100)
-treatment_labels <- c("YS0", "YS25", "YS50", "YS75", "YS100")
+# RDYS_1..5 ↔ treatment labels (RS = Rhizosphere Soil %)
+treatment_labels <- c("RS0", "RS25", "RS50", "RS75", "RS100")
 treatment_colors <- c(
-  YS0 = "#1B9E77",
-  YS25 = "#D95F02",
-  YS50 = "#7570B3",
-  YS75 = "#E7298A",
-  YS100 = "#66A61E"
+  RS0 = "#1B9E77",
+  RS25 = "#D95F02",
+  RS50 = "#7570B3",
+  RS75 = "#E7298A",
+  RS100 = "#66A61E"
 )
 
 module_colors <- c("Module 1" = "#E41A1C", "Module 2" = "#377EB8")
 
 font_sizes <- list(
-  row_names_main = 10,
-  col_names_main = 11,
-  row_names_full = 8,
-  col_names_full = 8,
+  row_names_main = 12,
+  col_names_main = 13,
+  row_names_full = 10,
+  col_names_full = 10,
   legend_title = 12,
-  legend_labels = 10
+  legend_labels = 11
 )
 
 # -------------------- helpers --------------------
@@ -182,16 +182,20 @@ key_tbl <- data.frame(
 write.csv(key_tbl, file.path(out_dir, "Fig4_key_phyla.csv"), row.names = FALSE)
 writeLines(paste(key_phyla, collapse = ", "), file.path(out_dir, "Fig4_key_phyla.txt"))
 
-# -------------------- Figure 4 main: key phyla × treatment means --------------------
-mat_main <- rel_mean_mat[key_phyla, , drop = FALSE] * 100
+# -------------------- Figure 4 main: key phyla × treatment means (Z-score) ----------
+mat_rel <- rel_mean_mat[key_phyla, , drop = FALSE]
+# Row-wise Z-score standardization
+mat_main <- t(scale(t(mat_rel)))
+mat_main[is.na(mat_main)] <- 0
 
-cl_main <- cluster_to_modules(mat_main, k = 2)
+cl_main <- cluster_to_modules(mat_rel, k = 2)  # cluster on original values
 mat_main <- mat_main[cl_main$hc$order, , drop = FALSE]
 module_main <- cl_main$module[cl_main$hc$order]
 
+# Symmetric diverging color scale: blue-white-red
 col_fun_main <- colorRamp2(
-  c(0, max(mat_main, na.rm = TRUE) / 2, max(mat_main, na.rm = TRUE)),
-  c("#F7FBFF", "#6BAED6", "#08306B")
+  c(-1.5, 0, 1.5),
+  c("#2166AC", "#F7F7F7", "#B2182B")
 )
 
 ha_col_main <- HeatmapAnnotation(
@@ -214,7 +218,7 @@ ha_row_main <- rowAnnotation(
 
 ht_main <- Heatmap(
   mat_main,
-  name = "Rel. abundance (%)",
+  name = "Z-score",
   col = col_fun_main,
   cluster_rows = FALSE,
   cluster_columns = FALSE,
@@ -222,7 +226,7 @@ ht_main <- Heatmap(
   show_column_dend = FALSE,
   row_split = module_main,
   row_gap = unit(2, "mm"),
-  column_title = "Treatment (mean across trees, n=3)",
+  column_title = "Treatment (n=3)",
   column_title_gp = gpar(fontsize = font_sizes$col_names_main + 1, fontface = "bold"),
   top_annotation = ha_col_main,
   left_annotation = ha_row_main,
@@ -252,16 +256,21 @@ dev.off()
 # -------------------- Figure S4 (optional): full phylum heatmap (all samples) --------------------
 if (isTRUE(make_full_supp)) {
   nonzero_phyla <- names(phylum_mean)
-  mat_full <- rel_mat[nonzero_phyla, , drop = FALSE] * 100
-  mean_full <- rel_mean_mat[nonzero_phyla, , drop = FALSE] * 100
+  mat_rel_full <- rel_mat[nonzero_phyla, , drop = FALSE]
+  mean_rel_full <- rel_mean_mat[nonzero_phyla, , drop = FALSE]
 
-  cl_full <- cluster_to_modules(mean_full, k = 2)
+  # Row-wise Z-score for display matrix
+  mat_full <- t(scale(t(mat_rel_full)))
+  mat_full[is.na(mat_full)] <- 0
+
+  cl_full <- cluster_to_modules(mean_rel_full, k = 2)  # cluster on original
   mat_full <- mat_full[cl_full$hc$order, , drop = FALSE]
   module_full <- cl_full$module[cl_full$hc$order]
 
+  # Symmetric diverging color scale: blue-white-red
   col_fun_full <- colorRamp2(
-    c(0, max(mat_full, na.rm = TRUE) / 2, max(mat_full, na.rm = TRUE)),
-    c("#F7FBFF", "#6BAED6", "#08306B")
+    c(-1.5, 0, 1.5),
+    c("#2166AC", "#F7F7F7", "#B2182B")
   )
 
   ha_col_full <- HeatmapAnnotation(
@@ -284,7 +293,7 @@ if (isTRUE(make_full_supp)) {
 
   ht_full <- Heatmap(
     mat_full,
-    name = "Rel. abundance (%)",
+    name = "Z-score",
     col = col_fun_full,
     cluster_rows = FALSE,
     cluster_columns = FALSE,

@@ -1,0 +1,28 @@
+"ShortCode","FullName","Type","SuperClass"
+"M1","Streptoaminal-8N","Metabolite","Organoheterocyclic compounds"
+"M2","Isofraxidin","Metabolite","Phenylpropanoids and polyketides"
+"M3","Marinoquinoline C","Metabolite","Organoheterocyclic compounds"
+"M4","Biverlactone B","Metabolite","Organoheterocyclic compounds"
+"M5","Sch 725674","Metabolite","Phenylpropanoids and polyketides"
+"M6","8,8a-Deoxyoleandolide","Metabolite","Phenylpropanoids and polyketides"
+"M7","Lupinisoflavone G","Metabolite","Phenylpropanoids and polyketides"
+"M8","(2s)-12-[(2r,5s,6s)-5-hydroxy-6-methylpiperidin-2-yl]dodecane-1,2-diol","Metabolite","Alkaloids and derivatives"
+"M9","Sinensol E","Metabolite","Benzenoids"
+"M10","Pyrenocine K","Metabolite","Organoheterocyclic compounds"
+"M11","Dechlororoseophilin","Metabolite","Organic oxygen compounds"
+"M12","Surinone B","Metabolite","Organic oxygen compounds"
+"M13","Isoconulothiazole B","Metabolite","Benzenoids"
+"M14","1-Acetylaspidoalbidine","Metabolite","Organoheterocyclic compounds"
+"M15","Glyceryl linolenate","Metabolite","Lipids and lipid-like molecules"
+"T1","Proteobacteria","Taxon",NA
+"T2","Chloroflexi","Taxon",NA
+"T3","Acidobacteriota","Taxon",NA
+"T4","Bacteroidota","Taxon",NA
+"T5","Actinobacteriota","Taxon",NA
+"T6","Verrucomicrobiota","Taxon",NA
+"T7","Firmicutes","Taxon",NA
+"T8","unclassified_Bacteria","Taxon",NA
+"T9","Latescibacterota","Taxon",NA
+"T10","Patescibacteria","Taxon",NA
+"T11","Gemmatimonadota","Taxon",NA
+"T12","Myxococcota","Taxon",NA

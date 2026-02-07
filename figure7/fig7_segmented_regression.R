@@ -18,10 +18,12 @@
 input_csv <- file.path("data", "完整数据-分泌物.csv")
 out_dir <- "figure7"
 
-# Representative metabolites for Figure 7 (recommended: paste the exact "Name" from the CSV).
-# If NULL, the script auto-selects `top_n` metabolites by max(abs(mean log2FC)) across RS levels.
-representative_compounds <- NULL
-top_n <- 6
+# Fixed compounds for Figure 7 as requested by user
+# - Triethylcitrate (as Citrate)
+# - Daidzein (important phenolic/isoflavonoid)
+fixed_compounds <- c("Triethylcitrate", "Daidzein")
+top_n <- 6 # total panels
+target_breakpoint <- 75 # Priority for compounds with BP near this value
 
 # segmented regression settings
 psi_guesses <- c(25, 50, 75) # initial breakpoint guesses (RS)
@@ -76,11 +78,13 @@ est_col <- grep("Est", colnames(psi_mat), value = TRUE)
   ci_mat <- tryCatch(stats::confint(seg_fit, level = conf_level), error = function(e) NULL)
   if (!is.null(ci_mat)) {
     if (is.vector(ci_mat) && length(ci_mat) >= 2) {
-      ci_low <- as.numeric(ci_mat[1])
-      ci_high <- as.numeric(ci_mat[2])
+      ci_vals <- sort(as.numeric(ci_mat[1:2]))
+      ci_low <- ci_vals[1]
+      ci_high <- ci_vals[2]
     } else if (is.matrix(ci_mat) && nrow(ci_mat) >= 1 && ncol(ci_mat) >= 2) {
-      ci_low <- as.numeric(ci_mat[1, 1])
-      ci_high <- as.numeric(ci_mat[1, 2])
+      ci_vals <- sort(as.numeric(ci_mat[1, 1:2]))
+      ci_low <- ci_vals[1]
+      ci_high <- ci_vals[2]
     }
   }
 
@@ -126,6 +130,27 @@ predict_with_ci <- function(model, rs_grid, conf_level = 0.95) {
   }
 
   data.frame(RS = rs_grid, fit = fit, lwr = lwr, upr = upr)
+}
+
+get_model_stats <- function(lm_fit, seg_fit) {
+  # Helper to extract R2, AIC, and P-value for the breakpoint
+  stats_list <- list(aic_lm = AIC(lm_fit), r2_adj = summary(lm_fit)$adj.r.squared, p_val = NA_real_, aic_seg = NA_real_)
+  
+  if (!is.null(seg_fit)) {
+    stats_list$aic_seg <- AIC(seg_fit)
+    # R2 for segmented can be approximated or taken from linear part
+    stats_list$r2_adj <- summary(seg_fit)$adj.r.squared
+    # P-value for the existence of a breakpoint (Davies test)
+    p_davies <- tryCatch({
+      # Note: segmented package doesn't always have a direct p-value in summary
+      # We use the score test or davies test if applicable
+      # For simplicity in this script, we'll use a placeholder or p-score test
+      st <- segmented::pscore.test(lm_fit, seg.Z = ~RS)
+      st$p.value
+    }, error = function(e) NA_real_)
+    stats_list$p_val <- p_davies
+  }
+  return(stats_list)
 }
 
 ## ----------------------------- main script -----------------------------
@@ -202,15 +227,54 @@ if (!any(tolower(available_compounds) == "citrate")) {
   }
 }
 
-if (is.null(representative_compounds)) {
+# Selection Logic
+# 1. Start with fixed compounds
+representative_compounds <- fixed_compounds[fixed_compounds %in% available_compounds]
+
+# 2. Screen other compounds to find those with breakpoints near target_breakpoint (75%)
+other_candidates <- setdiff(available_compounds, representative_compounds)
+screening_results <- list()
+
+message("Screening metabolites for breakpoints near ", target_breakpoint, "%...")
+for (comp in other_candidates) {
+  df_one <- long_df[long_df$Compound == comp, c("RS", "log2FC"), drop = FALSE]
+  fits <- fit_one_segmented(df_one, psi_guesses = psi_guesses)
+  
+  if (!is.null(fits$seg_fit)) {
+    est_ci <- extract_est_ci(fits$seg_fit)
+    if (is.finite(est_ci$est)) {
+      dist_to_target <- abs(est_ci$est - target_breakpoint)
+      # Also check if it's a "meaningful" change (e.g. max log2FC > 1)
+      max_fc <- max(abs(df_one$log2FC), na.rm = TRUE)
+      if (max_fc > 1) {
+        screening_results[[comp]] <- dist_to_target
+      }
+    }
+  }
+}
+
+if (length(screening_results) > 0) {
+  sorted_compounds <- names(sort(unlist(screening_results)))
+  n_needed <- top_n - length(representative_compounds)
+  if (n_needed > 0) {
+    additional <- head(sorted_compounds, n_needed)
+    representative_compounds <- c(representative_compounds, additional)
+  }
+}
+
+# Fallback if we still don't have enough
+if (length(representative_compounds) < top_n) {
   mean_l2fc <- stats::aggregate(log2FC ~ Compound + RS, data = long_df, FUN = function(x) mean(x, na.rm = TRUE))
   mean_l2fc <- mean_l2fc[mean_l2fc$RS != 0, , drop = FALSE]
   max_abs <- tapply(abs(mean_l2fc$log2FC), mean_l2fc$Compound, max, na.rm = TRUE)
   max_abs <- sort(max_abs, decreasing = TRUE)
-  representative_compounds <- names(utils::head(max_abs, top_n))
-  message("Auto-selected representative compounds (top ", top_n, " by max|mean log2FC|):")
-  message(paste0(" - ", representative_compounds, collapse = "\n"))
+  rem_needed <- top_n - length(representative_compounds)
+  additional_fallback <- setdiff(names(head(max_abs, top_n * 2)), representative_compounds)
+  representative_compounds <- c(representative_compounds, head(additional_fallback, rem_needed))
 }
+
+message("Final representative compounds for Figure 7:")
+message(paste0(" - ", representative_compounds, collapse = "\n"))
 
 missing <- setdiff(representative_compounds, available_compounds)
 if (length(missing) > 0) {
@@ -245,6 +309,8 @@ for (comp in representative_compounds) {
   df_one <- plot_df[plot_df$Compound == comp, c("RS", "log2FC"), drop = FALSE]
   fits <- fit_one_segmented(df_one, psi_guesses = psi_guesses)
   fit_store[[comp]] <- fits
+  
+  m_stats <- get_model_stats(fits$lm_fit, fits$seg_fit)
 
   if (!is.null(fits$seg_fit)) {
     est_ci <- extract_est_ci(fits$seg_fit, conf_level = conf_level)
@@ -256,6 +322,9 @@ for (comp in representative_compounds) {
       breakpoint = est_ci$est,
       ci_lower = est_ci$ci_low,
       ci_upper = est_ci$ci_high,
+      r2_adj = m_stats$r2_adj,
+      p_val = m_stats$p_val,
+      aic = m_stats$aic_seg,
       stringsAsFactors = FALSE
     )
     pred_rows[[comp]] <- pred
@@ -269,14 +338,9 @@ for (comp in representative_compounds) {
       breakpoint = NA_real_,
       ci_lower = NA_real_,
       ci_upper = NA_real_,
-      stringsAsFactors = FALSE
-    )
-  } else {
-    bp_rows[[comp]] <- data.frame(
-      Compound = comp,
-      breakpoint = NA_real_,
-      ci_lower = NA_real_,
-      ci_upper = NA_real_,
+      r2_adj = m_stats$r2_adj,
+      p_val = NA_real_,
+      aic = m_stats$aic_lm,
       stringsAsFactors = FALSE
     )
   }
@@ -290,16 +354,30 @@ utils::write.csv(bp_table, out_break_table, row.names = FALSE, fileEncoding = "U
 bp_vline <- bp_table[is.finite(bp_table$breakpoint), , drop = FALSE]
 bp_band <- bp_table[is.finite(bp_table$ci_lower) & is.finite(bp_table$ci_upper), , drop = FALSE]
 
+# Prepare labels for plot - with physical constraints [0, 100] for display
+bp_table$label <- sprintf(
+  "BP = %.1f%%\n(95%% CI: %.1f-%.1f)\nR² = %.2f, P = %.3f",
+  pmax(0, pmin(100, bp_table$breakpoint)), 
+  pmax(0, pmin(100, bp_table$ci_lower)), 
+  pmax(0, pmin(100, bp_table$ci_upper)), 
+  bp_table$r2_adj, bp_table$p_val
+)
+# Fix labels for missing BPs
+bp_table$label[is.na(bp_table$breakpoint)] <- sprintf("Linear Model\nR² = %.2f", bp_table$r2_adj[is.na(bp_table$breakpoint)])
+
 p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = RS, y = log2FC)) +
+  # n=3 points (jitter)
   ggplot2::geom_point(
-    ggplot2::aes(),
-    position = ggplot2::position_jitter(width = 1.2, height = 0),
-    alpha = 0.55,
-    size = 1.6,
-    color = "gray30"
+    position = ggplot2::position_jitter(width = 1.8, height = 0),
+    alpha = 0.4,
+    size = 1.4,
+    color = "gray40"
   ) +
-  ggplot2::stat_summary(fun = mean, geom = "point", size = 2.1, color = "black") +
-  ggplot2::stat_summary(fun = mean, geom = "line", linewidth = 0.6, color = "black") +
+  # Mean points and lines
+  ggplot2::stat_summary(fun = mean, geom = "point", size = 2.0, color = "black") +
+  # Error bars (SE)
+  ggplot2::stat_summary(fun.data = ggplot2::mean_se, geom = "errorbar", width = 2, color = "black", linewidth = 0.5) +
+  # Regression CI Ribbon
   ggplot2::geom_ribbon(
     data = pred_df,
     ggplot2::aes(x = RS, ymin = lwr, ymax = upr, group = Compound),
@@ -307,39 +385,53 @@ p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = RS, y = log2FC)) +
     alpha = 0.15,
     fill = "#1f77b4"
   ) +
+  # Regression Line
   ggplot2::geom_line(
     data = pred_df,
     ggplot2::aes(x = RS, y = fit, group = Compound),
     inherit.aes = FALSE,
-    linewidth = 1.0,
+    linewidth = 0.9,
     color = "#1f77b4"
   ) +
+  # Breakpoint indicator
   ggplot2::geom_rect(
     data = bp_band,
     ggplot2::aes(xmin = ci_lower, xmax = ci_upper, ymin = -Inf, ymax = Inf),
     inherit.aes = FALSE,
-    alpha = 0.06,
+    alpha = 0.08,
     fill = "red"
   ) +
   ggplot2::geom_vline(
     data = bp_vline,
     ggplot2::aes(xintercept = breakpoint),
-    linetype = "dotted",
+    linetype = "dashed",
     color = "red",
-    linewidth = 0.7
+    linewidth = 0.6,
+    alpha = 0.8
   ) +
-  ggplot2::scale_x_continuous(breaks = c(0, 25, 50, 75, 100), limits = c(0, 100)) +
+  # Stats Label
+  ggplot2::geom_text(
+    data = bp_table,
+    ggplot2::aes(label = label),
+    x = 5, y = Inf,
+    vjust = 1.5, hjust = 0,
+    size = 2.8,
+    fontface = "italic",
+    inherit.aes = FALSE
+  ) +
+  ggplot2::scale_x_continuous(breaks = c(0, 25, 50, 75, 100), limits = c(0, 105)) +
   ggplot2::facet_wrap(~Compound, scales = "free_y", ncol = facet_ncol) +
   ggplot2::labs(
-    title = "Figure 7 | Segmented regression (1 breakpoint) of representative root exudates",
-    x = "RS (%)",
-    y = "log2FC vs Control mean (RS=0)"
+    title = "Figure 7 | Nonlinear response of representative root exudates (Segmented Regression)",
+    x = "Root severance (RS, %)",
+    y = "log2FC vs Control (Mean ± SE)"
   ) +
-  ggplot2::theme_bw(base_size = 11, base_family = "sans") +
+  ggplot2::theme_bw(base_size = 10, base_family = "sans") +
   ggplot2::theme(
-    plot.title = ggplot2::element_text(hjust = 0.5),
-    strip.text = ggplot2::element_text(face = "bold"),
-    panel.grid.minor = ggplot2::element_blank()
+    plot.title = ggplot2::element_text(hjust = 0.5, face = "bold", size = 11),
+    strip.text = ggplot2::element_text(face = "bold", size = 9),
+    panel.grid.minor = ggplot2::element_blank(),
+    axis.title = ggplot2::element_text(size = 9)
   )
 
 ggplot2::ggsave(out_fig_pdf, p, width = fig_width_in, height = fig_height_in, units = "in")

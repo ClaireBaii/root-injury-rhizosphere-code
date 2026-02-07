@@ -145,6 +145,7 @@ meta <- data.frame(
   Group = vapply(sample_ids, infer_group, character(1)),
   stringsAsFactors = FALSE
 )
+rownames(meta) <- sample_ids  # Critical for adonis2 alignment
 group_order <- c("Control", "Treat1", "Treat2", "Treat3", "Treat4")
 meta$Group <- factor(meta$Group, levels = unique(c(group_order, sort(unique(meta$Group)))))
 
@@ -191,6 +192,95 @@ if (all(is.na(faith_pd)) && !is.na(phylo_tree_file) && nzchar(phylo_tree_file) &
     faith_pd <- pd_res$PD
     names(faith_pd) <- rownames(pd_res)
     faith_pd <- faith_pd[sample_ids]
+  }
+} else if (all(is.na(faith_pd))) {
+  # Fallback: Construct taxonomic tree from taxonomy column if available
+  # This uses vegan::taxa2dist to compute taxonomic distance, then hclust -> as.phylo
+  if (!requireNamespace("ape", quietly = TRUE) || !requireNamespace("picante", quietly = TRUE)) {
+     message("Missing packages for Faith_pd calculation (ape/picante). Skipping.")
+  } else {
+     # Check if we have taxonomy data for the current OTUs
+     # raw is already filtered to match otu_mat rows?
+     # raw was filtered at line 128/129/141?
+     # otu_mat row names are OTU IDs.
+     # We need to get taxonomy strings for these OTUs.
+     
+     # Re-match raw to otu_mat just to be safe (though raw rows correspond to otu identifiers)
+     # raw has unique OTU IDs (line 129). 
+     # otu_mat rows are subset of raw (line 141 removed zero sums).
+     
+     curr_otus <- rownames(otu_mat)
+     match_idx <- match(curr_otus, raw[[otu_id_col]])
+     valid_idx <- !is.na(match_idx)
+    
+     if (sum(valid_idx) > 0 && tax_col <= ncol(raw)) {
+       message("Constructing TAXONOMIC tree from taxonomy column (fallback for Faith_pd)...")
+       
+       tax_strs <- raw[[tax_col]][match_idx[valid_idx]]
+       # Clean taxonomy strings and split
+       # Example: "d__Bacteria; p__..."
+       # We'll split by ";" or ","
+       
+       # Remove "d__", "p__" etc for cleaner factors? Not strictly necessary for distance, gives same result.
+       tax_list <- strsplit(tax_strs, "[;\\,]", perl = TRUE)
+       max_depth <- max(sapply(tax_list, length))
+       
+       # Convert to data frame
+       tax_df <- do.call(rbind, lapply(tax_list, function(x) {
+         length(x) <- max_depth
+         return(x)
+       }))
+       
+       # Replace NA with "Unclassified"
+       tax_df[is.na(tax_df)] <- "Unclassified"
+       rownames(tax_df) <- curr_otus[valid_idx]
+       as.data.frame(tax_df) -> tax_df
+       
+       # Determine if dataset is too large for taxa2dist (N^2 distance matrix)
+       # If N > 2000, it might be slow. But user has 24MB file, likely < 5000 OTUs?
+       # Let's try it.
+       
+       tryCatch({
+         # vegan::taxa2dist requires factors
+         for(i in 1:ncol(tax_df)) tax_df[,i] <- as.factor(tax_df[,i])
+         
+         # varstep=TRUE: variable step lengths between ranks
+         tax_dist <- vegan::taxa2dist(tax_df, varstep = TRUE)
+         
+         # Check for NA/NaN in distance (rare but possible)
+         tax_dist[is.na(tax_dist)] <- 1
+         
+         # hclust
+         tax_clus <- hclust(tax_dist, method = "average")
+         
+         # as.phylo
+         tax_tree <- ape::as.phylo(tax_clus)
+         
+         # Normalize branch lengths to sensible scale (max depth = 7 ranks typically)
+         # This ensures Faith_pd values are in a reasonable range
+         if (!is.null(tax_tree$edge.length) && length(tax_tree$edge.length) > 0) {
+           # Scale branch lengths so total tree height ~ number of ranks (7)
+           max_height <- max(ape::node.depth.edgelength(tax_tree))
+           if (max_height > 0) {
+             tax_tree$edge.length <- tax_tree$edge.length / max_height * 7
+           }
+         }
+         
+         # Calculate PD
+         message("Calculating Faith's PD using taxonomic tree...")
+         pd_res <- picante::pd(t(otu_mat), tax_tree, include.root = TRUE)
+         faith_pd <- pd_res$PD
+         names(faith_pd) <- rownames(pd_res)
+         faith_pd <- faith_pd[sample_ids]
+         
+         message("Faith_pd calculation using taxonomic tree done.")
+         
+       }, error = function(e) {
+         message("Failed to construct taxonomic tree or calculate Faith_pd: ", e$message)
+       })
+     } else {
+       message("No valid taxonomy column found for Faith_pd fallback.")
+     }
   }
 }
 
@@ -349,9 +439,10 @@ pc2_pct <- ifelse(length(var_expl) >= 2, var_expl[2], NA_real_)
 
 adon <- vegan::adonis2(bray ~ Group, data = meta, permutations = permutations)
 adon_df <- as.data.frame(adon)
-grp_row <- adon_df[rownames(adon_df) == "Group", , drop = FALSE]
-permanova_r2 <- as.numeric(grp_row$R2[1])
-permanova_p <- as.numeric(grp_row$`Pr(>F)`[1])
+# adonis2 output has rows: Model (or factor name), Residual, Total
+# The first row contains the group effect
+permanova_r2 <- as.numeric(adon_df$R2[1])
+permanova_p <- as.numeric(adon_df$`Pr(>F)`[1])
 
 permanova_tbl <- data.frame(
   term = "Group",

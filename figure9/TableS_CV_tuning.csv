@@ -1,0 +1,7 @@
+"comp1","comp2","keepX","cv_folds","cv_repeats","cv_dist","cv_measure"
+0.264,0.024,"5",3,50,"centroids.dist","BER"
+0.3,0.00133333333333333,"10",3,50,"centroids.dist","BER"
+0.312,0,"15",3,50,"centroids.dist","BER"
+0.289333333333333,0,"20",3,50,"centroids.dist","BER"
+0.294666666666667,0.00133333333333333,"25",3,50,"centroids.dist","BER"
+0.266666666666667,0.004,"30",3,50,"centroids.dist","BER"

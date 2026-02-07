@@ -81,17 +81,19 @@ out_dir <- script_dir
 
 config <- list(
   fdr_alpha = 0.05,
-  thr_main = 0.7,
-  thr_sensitivity = 0.5,
-  hub_top_n = 10,
+  thr_exudate = 0.80,          # 代谢物网络阈值（稍高以减少密度）
+  thr_microbe = 0.60,          # 微生物网络阈值（降低以获得更多边）
+  thr_sensitivity_high = 0.7,  # 敏感性分析高阈值
+  thr_sensitivity_low = 0.5,   # 敏感性分析低阈值
+  hub_top_n = 8,               # 标注的 top hub 数量
   seed = 42,
-  # 为避免 1800+ 代谢物网络“毛球”过密，默认仅取 max(|log2FC|) Top N 代谢物构网；
+  # 为避免 1800+ 代谢物网络"毛球"过密，默认仅取 max(|log2FC|) Top N 代谢物构网；
   # 如需使用全部代谢物：将 exudate_filter = NULL（或把 exudate_top_n 调大）。
   exudate_filter = "max_abs_log2fc", # NULL / "max_abs_log2fc"
-  exudate_top_n = 200,
-  microbe_rank = "phylum",      # phylum / genus
-  microbe_top_n = 30,
-  microbe_min_prevalence = 0.2, # proportion of samples with >0
+  exudate_top_n = 60,         # 适当增加节点数量以显示更丰富的网络结构
+  microbe_rank = "genus",     # 改为 genus 以获得更多节点
+  microbe_top_n = 40,         # 增加 taxa 数量
+  microbe_min_prevalence = 0.15, # 降低 prevalence 阈值
   perm_n = 10000
 )
 
@@ -179,8 +181,17 @@ read_microbe_matrix <- function(path,
   group <- extract_tax_rank(df$taxonomy, rank = rank)
   agg <- rowsum(mat, group = group, reorder = FALSE)
 
+  # 将 NA 值替换为 0，避免 colSums 返回 NA
+  agg[is.na(agg)] <- 0
+  
   col_sums <- colSums(agg)
-  if (any(col_sums <= 0)) stop("Microbe table has sample(s) with non-positive total counts; cannot compute relative abundance.", call. = FALSE)
+  if (any(is.na(col_sums)) || any(col_sums <= 0)) {
+    warning("Some samples have zero total counts; filtering out these samples.", call. = FALSE)
+    valid_cols <- !is.na(col_sums) & col_sums > 0
+    agg <- agg[, valid_cols, drop = FALSE]
+    col_sums <- col_sums[valid_cols]
+    sample_cols <- sample_cols[valid_cols]
+  }
   rel <- sweep(agg, 2, col_sums, "/")
 
   prevalence <- rowMeans(rel > 0)
@@ -245,9 +256,34 @@ build_correlation_network <- function(mat,
   }
 
   g <- igraph::graph_from_data_frame(edges, directed = FALSE)
-  g <- igraph::simplify(g, remove.multiple = TRUE, remove.loops = TRUE)
-
-  E(g)$abs_rho <- abs(E(g)$rho)
+  # 保留边属性，因为 simplify 会移除重复边
+  # 首先创建映射以在 simplify 后恢复属性
+  edge_attr_df <- edges[, c("from", "to", "rho", "abs_rho", "sign"), drop = FALSE]
+  
+  g <- igraph::simplify(g, remove.multiple = TRUE, remove.loops = TRUE, 
+                        edge.attr.comb = list(rho = "first", abs_rho = "first", 
+                                              p = "first", p_adj = "first", 
+                                              sign = "first"))
+  
+  # 确保边属性是数值型
+  if (is.null(E(g)$rho) || any(is.na(E(g)$rho))) {
+    # 如果属性丢失，从 edges 重新匹配
+    el <- as_edgelist(g)
+    for (i in seq_len(ecount(g))) {
+      from_v <- el[i, 1]
+      to_v <- el[i, 2]
+      match_idx <- which((edges$from == from_v & edges$to == to_v) | 
+                         (edges$from == to_v & edges$to == from_v))[1]
+      if (!is.na(match_idx)) {
+        E(g)[i]$rho <- edges$rho[match_idx]
+        E(g)[i]$abs_rho <- edges$abs_rho[match_idx]
+        E(g)[i]$sign <- edges$sign[match_idx]
+      }
+    }
+  }
+  
+  E(g)$abs_rho <- as.numeric(E(g)$abs_rho)
+  E(g)$rho <- as.numeric(E(g)$rho)
   E(g)$sign <- ifelse(E(g)$rho >= 0, "positive", "negative")
 
   cl <- igraph::cluster_louvain(g, weights = E(g)$abs_rho)
@@ -294,29 +330,68 @@ network_topology <- function(g, cluster) {
 
 make_module_palette <- function(mod_levels) {
   n <- length(mod_levels)
-  base <- RColorBrewer::brewer.pal(min(max(3, n), 12), "Set3")
-  cols <- if (n <= length(base)) base[seq_len(n)] else grDevices::colorRampPalette(base)(n)
+  # Okabe-Ito colorblind-friendly palette (extended)
+  okabe_ito <- c(
+    "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2",
+    "#D55E00", "#CC79A7", "#999999", "#000000", "#88CCEE",
+    "#44AA99", "#117733", "#332288", "#AA4499", "#882255",
+    "#661100", "#6699CC", "#DDCC77"
+  )
+  cols <- if (n <= length(okabe_ito)) {
+    okabe_ito[seq_len(n)]
+  } else {
+    grDevices::colorRampPalette(okabe_ito)(n)
+  }
   names(cols) <- mod_levels
   cols
 }
+
 
 plot_network <- function(g,
                          title,
                          subtitle,
                          node_size_attr = c("degree", "betweenness"),
+                         label_size = 2.8,
+                         filter_isolates = TRUE,
+                         layout_algo = c("stress", "fr", "graphopt"),
                          seed = 42) {
   node_size_attr <- match.arg(node_size_attr)
+  layout_algo <- match.arg(layout_algo)
+  
+  # 过滤孤立节点（度=0）
+  if (filter_isolates) {
+    isolates <- which(igraph::degree(g) == 0)
+    if (length(isolates) > 0) {
+      g <- igraph::delete_vertices(g, isolates)
+    }
+  }
+  
+  # 如果过滤后没有节点，返回空图
+  if (igraph::vcount(g) == 0) {
+    return(ggplot() + theme_void() + 
+           labs(title = title, subtitle = "No connected nodes after filtering"))
+  }
+  
   mod_levels <- levels(V(g)$module)
+  if (is.null(mod_levels)) mod_levels <- as.character(unique(V(g)$module))
   module_cols <- make_module_palette(mod_levels)
 
   V(g)$size_plot <- if (node_size_attr == "degree") {
-    scales::rescale(V(g)$degree, to = c(2.5, 9))
+    scales::rescale(V(g)$degree, to = c(4, 14))
   } else {
-    scales::rescale(log1p(V(g)$betweenness), to = c(2.5, 9))
+    scales::rescale(log1p(V(g)$betweenness), to = c(4, 14))
   }
 
   set.seed(seed)
-  p <- ggraph(g, layout = "fr") +
+  
+  # 选择布局算法
+  layout_spec <- switch(layout_algo,
+    "stress" = "stress",
+    "fr" = "fr",
+    "graphopt" = "graphopt"
+  )
+  
+  p <- ggraph(g, layout = layout_spec) +
     geom_edge_link(
       aes(edge_colour = sign, edge_alpha = abs_rho, edge_width = abs_rho),
       show.legend = TRUE,
@@ -325,41 +400,75 @@ plot_network <- function(g,
     geom_node_point(
       aes(fill = module, size = size_plot),
       shape = 21,
-      color = "black",
-      stroke = 0.2,
+      color = "grey20",
+      stroke = 0.4,
+      alpha = 0.9,
       show.legend = TRUE
     )
 
+  # 标签样式优化
   if (requireNamespace("ggrepel", quietly = TRUE)) {
-    p <- p + geom_node_text(aes(label = label), repel = TRUE, size = 3.2)
+    p <- p + geom_node_text(
+      aes(label = label), 
+      repel = TRUE, 
+      size = label_size,
+      fontface = "bold.italic",
+      color = "grey10",
+      max.overlaps = 20,
+      point.padding = unit(0.3, "lines"),
+      box.padding = unit(0.4, "lines"),
+      segment.color = "grey40",
+      segment.size = 0.25,
+      segment.alpha = 0.6,
+      min.segment.length = 0,
+      force = 2,
+      force_pull = 0.5
+    )
   } else {
-    p <- p + geom_node_text(aes(label = label), repel = FALSE, size = 3.2, check_overlap = TRUE)
+    p <- p + geom_node_text(aes(label = label), repel = FALSE, size = label_size, check_overlap = TRUE)
   }
 
   p +
-    scale_fill_manual(values = module_cols, name = "Module (Louvain)") +
+    scale_fill_manual(values = module_cols, name = "Module") +
     scale_edge_colour_manual(
-      values = c(positive = "#1f78b4", negative = "#e31a1c"),
-      name = "Edge sign"
+      values = c(positive = "#4393C3", negative = "#D6604D"),
+      name = "Edge"
     ) +
-    scale_edge_alpha(range = c(0.25, 0.9), name = "|ρ|") +
-    scale_edge_width(range = c(0.2, 1.2), guide = "none") +
+    scale_edge_alpha(range = c(0.15, 0.75), name = expression("|"*rho*"|")) +
+    scale_edge_width(range = c(0.15, 1.2), guide = "none") +
     scale_size_identity(guide = "none") +
-    theme_void(base_size = 12) +
+    theme_void(base_size = 11) +
     theme(
       legend.position = "bottom",
-      legend.box = "vertical",
-      plot.title = element_text(face = "bold", size = 12, hjust = 0),
-      plot.subtitle = element_text(size = 10, hjust = 0)
+      legend.box = "horizontal",
+      legend.box.just = "center",
+      legend.margin = margin(t = 8, b = 5),
+      legend.spacing.x = unit(0.8, "cm"),
+      legend.title = element_text(size = 9, face = "bold"),
+      legend.text = element_text(size = 7.5),
+      legend.key.size = unit(0.4, "cm"),
+      plot.title = element_text(face = "bold", size = 14, hjust = 0, margin = margin(b = 2)),
+      plot.subtitle = element_text(size = 9, hjust = 0, color = "grey40", margin = margin(b = 8)),
+      plot.margin = margin(15, 15, 10, 15),
+      plot.background = element_rect(fill = "white", color = NA)
+    ) +
+    guides(
+      fill = guide_legend(nrow = 1, override.aes = list(size = 5, alpha = 1)),
+      edge_colour = guide_legend(override.aes = list(edge_width = 2, edge_alpha = 0.8)),
+      edge_alpha = guide_legend(nrow = 1, override.aes = list(edge_width = 2))
     ) +
     labs(title = title, subtitle = subtitle)
 }
 
-save_grid <- function(plots, nrow, ncol, path, width, height, device = c("pdf", "tiff")) {
+
+
+save_grid <- function(plots, nrow, ncol, path, width, height, device = c("pdf", "tiff", "png")) {
   device <- match.arg(device)
 
   if (device == "pdf") {
-    grDevices::pdf(path, width = width, height = height, onefile = TRUE)
+    grDevices::cairo_pdf(path, width = width, height = height, onefile = TRUE)
+  } else if (device == "png") {
+    grDevices::png(path, width = width, height = height, units = "in", res = 300, bg = "white")
   } else {
     grDevices::tiff(path, width = width, height = height, units = "in", res = 300, compression = "lzw")
   }
@@ -406,20 +515,20 @@ run_fig5 <- function(mode = c("all", "exudate", "microbe", "sensitivity", "posne
   )
 
   if (mode %in% c("all", "exudate")) {
-    message("Building exudate network (main threshold)...")
+    message("Building exudate network (threshold = ", config$thr_exudate, ")...")
     exu_net <- build_correlation_network(
       exu$mat,
-      threshold = config$thr_main,
+      threshold = config$thr_exudate,
       fdr_alpha = config$fdr_alpha,
       hub_top_n = config$hub_top_n,
       seed = config$seed
     )
     exu_topo <- network_topology(exu_net$graph, exu_net$cluster)
     exu_topo$dataset <- "exudate"
-    exu_topo$threshold <- config$thr_main
+    exu_topo$threshold <- config$thr_exudate
     exu_topo$fdr_alpha <- config$fdr_alpha
 
-    write.csv(exu_net$edges, file.path(out_dir, sprintf("Fig5A_exudate_edges_thr%.1f.csv", config$thr_main)), row.names = FALSE)
+    write.csv(exu_net$edges, file.path(out_dir, sprintf("Fig5A_exudate_edges_thr%.1f.csv", config$thr_exudate)), row.names = FALSE)
     write.csv(
       data.frame(
         node = V(exu_net$graph)$name,
@@ -428,38 +537,45 @@ run_fig5 <- function(mode = c("all", "exudate", "microbe", "sensitivity", "posne
         betweenness = V(exu_net$graph)$betweenness,
         is_hub = V(exu_net$graph)$is_hub
       ),
-      file.path(out_dir, sprintf("Fig5A_exudate_nodes_thr%.1f.csv", config$thr_main)),
+      file.path(out_dir, sprintf("Fig5A_exudate_nodes_thr%.1f.csv", config$thr_exudate)),
       row.names = FALSE
     )
 
     p_exu <- plot_network(
       exu_net$graph,
       title = "A. Exudate co-variance network",
-      subtitle = sprintf("Spearman |ρ| ≥ %.1f; BH-FDR < %.2f; node color = Louvain module; edge color = sign", config$thr_main, config$fdr_alpha),
+      subtitle = sprintf("Spearman |rho| >= %.2f; BH-FDR < %.2f; n = %d nodes", 
+                         config$thr_exudate, config$fdr_alpha, igraph::vcount(exu_net$graph)),
       node_size_attr = "degree",
+      label_size = 2.5,
+      filter_isolates = TRUE,
+      layout_algo = "stress",
       seed = config$seed
     )
 
-    ggsave(file.path(out_dir, "Fig5A_exudate_network.pdf"), p_exu, width = 7.5, height = 6.5)
+    # 输出 PNG 格式（更小且适合论文）
+    ggsave(file.path(out_dir, "Fig5A_exudate_network.png"), p_exu, width = 9, height = 8, dpi = 300, bg = "white")
+    # 也输出 PDF 版本
+    ggsave(file.path(out_dir, "Fig5A_exudate_network.pdf"), p_exu, width = 9, height = 8, device = cairo_pdf)
   }
 
   if (mode %in% c("all", "microbe")) {
-    message("Building microbe network (main threshold)...")
+    message("Building microbe network (threshold = ", config$thr_microbe, ")...")
     mic_net <- build_correlation_network(
       mic$mat,
-      threshold = config$thr_main,
+      threshold = config$thr_microbe,
       fdr_alpha = config$fdr_alpha,
       hub_top_n = config$hub_top_n,
       seed = config$seed
     )
     mic_topo <- network_topology(mic_net$graph, mic_net$cluster)
     mic_topo$dataset <- sprintf("microbe_%s", config$microbe_rank)
-    mic_topo$threshold <- config$thr_main
+    mic_topo$threshold <- config$thr_microbe
     mic_topo$fdr_alpha <- config$fdr_alpha
     mic_topo$top_n_taxa <- config$microbe_top_n
     mic_topo$min_prevalence <- config$microbe_min_prevalence
 
-    write.csv(mic_net$edges, file.path(out_dir, sprintf("Fig5B_microbe_edges_thr%.1f.csv", config$thr_main)), row.names = FALSE)
+    write.csv(mic_net$edges, file.path(out_dir, sprintf("Fig5B_microbe_edges_thr%.1f.csv", config$thr_microbe)), row.names = FALSE)
     write.csv(
       data.frame(
         node = V(mic_net$graph)$name,
@@ -468,19 +584,25 @@ run_fig5 <- function(mode = c("all", "exudate", "microbe", "sensitivity", "posne
         betweenness = V(mic_net$graph)$betweenness,
         is_hub = V(mic_net$graph)$is_hub
       ),
-      file.path(out_dir, sprintf("Fig5B_microbe_nodes_thr%.1f.csv", config$thr_main)),
+      file.path(out_dir, sprintf("Fig5B_microbe_nodes_thr%.1f.csv", config$thr_microbe)),
       row.names = FALSE
     )
 
     p_mic <- plot_network(
       mic_net$graph,
       title = "B. Microbiome co-occurrence network",
-      subtitle = sprintf("Spearman |ρ| ≥ %.1f; BH-FDR < %.2f; aggregated to %s (Top %d)", config$thr_main, config$fdr_alpha, config$microbe_rank, config$microbe_top_n),
+      subtitle = sprintf("Spearman |rho| >= %.2f; BH-FDR < %.2f; %s level (Top %d)", 
+                         config$thr_microbe, config$fdr_alpha, config$microbe_rank, config$microbe_top_n),
       node_size_attr = "degree",
+      label_size = 3.2,
+      filter_isolates = FALSE,   # 微生物网络保留所有节点
+      layout_algo = "stress",
       seed = config$seed
     )
 
-    ggsave(file.path(out_dir, "Fig5B_microbe_network.pdf"), p_mic, width = 7.5, height = 6.5)
+    # 输出 PNG 格式（更小且适合论文）
+    ggsave(file.path(out_dir, "Fig5B_microbe_network.png"), p_mic, width = 9, height = 8, dpi = 300, bg = "white")
+    ggsave(file.path(out_dir, "Fig5B_microbe_network.pdf"), p_mic, width = 9, height = 8, device = cairo_pdf)
   }
 
   if (mode == "all") {
@@ -502,6 +624,16 @@ run_fig5 <- function(mode = c("all", "exudate", "microbe", "sensitivity", "posne
       width = 15,
       height = 7,
       device = "tiff"
+    )
+    # PNG 格式（更小且适合论文投稿）
+    save_grid(
+      plots = list(p_exu, p_mic),
+      nrow = 1,
+      ncol = 2,
+      path = file.path(out_dir, "Fig5_main.png"),
+      width = 15,
+      height = 7,
+      device = "png"
     )
 
     exu_topo$top_n_taxa <- NA_integer_
@@ -525,8 +657,8 @@ run_fig5 <- function(mode = c("all", "exudate", "microbe", "sensitivity", "posne
   }
 
   if (mode %in% c("all", "sensitivity")) {
-    message("Running threshold sensitivity (0.7 vs 0.5)...")
-    thr_pair <- c(config$thr_main, config$thr_sensitivity)
+    message("Running threshold sensitivity (", config$thr_sensitivity_high, " vs ", config$thr_sensitivity_low, ")...")
+    thr_pair <- c(config$thr_sensitivity_high, config$thr_sensitivity_low)
 
     exu_thr <- lapply(thr_pair, function(th) build_correlation_network(exu$mat, threshold = th, fdr_alpha = config$fdr_alpha, hub_top_n = config$hub_top_n, seed = config$seed))
     mic_thr <- lapply(thr_pair, function(th) build_correlation_network(mic$mat, threshold = th, fdr_alpha = config$fdr_alpha, hub_top_n = config$hub_top_n, seed = config$seed))
@@ -634,7 +766,7 @@ run_fig5 <- function(mode = c("all", "exudate", "microbe", "sensitivity", "posne
     if (!exists("exu_net", inherits = FALSE)) {
       exu_net <- build_correlation_network(
         exu$mat,
-        threshold = config$thr_main,
+        threshold = config$thr_exudate,
         fdr_alpha = config$fdr_alpha,
         hub_top_n = config$hub_top_n,
         seed = config$seed
@@ -643,7 +775,7 @@ run_fig5 <- function(mode = c("all", "exudate", "microbe", "sensitivity", "posne
     if (!exists("mic_net", inherits = FALSE)) {
       mic_net <- build_correlation_network(
         mic$mat,
-        threshold = config$thr_main,
+        threshold = config$thr_microbe,
         fdr_alpha = config$fdr_alpha,
         hub_top_n = config$hub_top_n,
         seed = config$seed

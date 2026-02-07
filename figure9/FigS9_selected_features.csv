@@ -1,0 +1,28 @@
+"Feature","Importance","Component","Loading","Type","Super_Class","Class","Sub_Class","Rank"
+"Streptoaminal-8N",0.584073573062177,1,0.584073573062177,"Metabolite","Organoheterocyclic compounds","Azaspirodecane derivatives","",1
+"Isofraxidin",0.57494934182135,1,0.57494934182135,"Metabolite","Phenylpropanoids and polyketides","Coumarins and derivatives","Hydroxycoumarins",2
+"Marinoquinoline C",0.452513609425531,1,0.452513609425531,"Metabolite","Organoheterocyclic compounds","Quinolines and derivatives","Pyrroloquinolines",3
+"Biverlactone B",0.446928339615975,2,0.446928339615975,"Metabolite","Organoheterocyclic compounds","Lactones","Delta valerolactones",4
+"Sch 725674",0.434283905765541,2,-0.434283905765541,"Metabolite","Phenylpropanoids and polyketides","Macrolides and analogues","",5
+"8,8a-Deoxyoleandolide",0.338940383348516,2,-0.338940383348516,"Metabolite","Phenylpropanoids and polyketides","Macrolides and analogues","",6
+"Lupinisoflavone G",0.336576027107881,1,0.336576027107881,"Metabolite","Phenylpropanoids and polyketides","Isoflavonoids","Isoflavans",7
+"(2s)-12-[(2r,5s,6s)-5-hydroxy-6-methylpiperidin-2-yl]dodecane-1,2-diol",0.274091738355643,2,-0.274091738355643,"Metabolite","Alkaloids and derivatives","","",8
+"Sinensol E",0.269440269513408,2,0.269440269513408,"Metabolite","Benzenoids","Phenanthrenes and derivatives","",9
+"Pyrenocine K",0.268947499792017,2,-0.268947499792017,"Metabolite","Organoheterocyclic compounds","Pyrans","Pyranones and derivatives",10
+"Dechlororoseophilin",0.25801852191645,2,-0.25801852191645,"Metabolite","Organic oxygen compounds","Organooxygen compounds","Ethers",11
+"Surinone B",0.243867262908364,2,0.243867262908364,"Metabolite","Organic oxygen compounds","Organooxygen compounds","Carbonyl compounds",12
+"Isoconulothiazole B",0.210080083675084,2,-0.210080083675084,"Metabolite","Benzenoids","Benzene and substituted derivatives","",13
+"1-Acetylaspidoalbidine",0.171714100683875,2,0.171714100683875,"Metabolite","Organoheterocyclic compounds","Indoles and derivatives","Carbazoles",14
+"Glyceryl linolenate",0.170688130560393,2,-0.170688130560393,"Metabolite","Lipids and lipid-like molecules","Fatty Acyls","Lineolic acids and derivatives",15
+"Proteobacteria",0,1,0,"Taxon",NA,NA,NA,1
+"Chloroflexi",0,1,0,"Taxon",NA,NA,NA,2
+"Acidobacteriota",0,1,0,"Taxon",NA,NA,NA,3
+"Bacteroidota",0,1,0,"Taxon",NA,NA,NA,4
+"Actinobacteriota",0,1,0,"Taxon",NA,NA,NA,5
+"Verrucomicrobiota",0,1,0,"Taxon",NA,NA,NA,6
+"Firmicutes",0,1,0,"Taxon",NA,NA,NA,7
+"unclassified_Bacteria",0,1,0,"Taxon",NA,NA,NA,8
+"Latescibacterota",0,1,0,"Taxon",NA,NA,NA,9
+"Patescibacteria",0,1,0,"Taxon",NA,NA,NA,10
+"Gemmatimonadota",0,1,0,"Taxon",NA,NA,NA,11
+"Myxococcota",0,1,0,"Taxon",NA,NA,NA,12

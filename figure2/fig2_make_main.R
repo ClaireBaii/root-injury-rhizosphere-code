@@ -99,6 +99,34 @@ fig2_make_main <- function(
   mat_z_top <- mat_z[top_names, , drop = FALSE]
   top_meta <- feature_meta[top_names, , drop = FALSE]
 
+  # --- Simplify Names for Display (Abbreviations) ---
+  raw_names <- rownames(mat_z_top)
+  # 1. Remove common IUPAC prefixes like (2S)-, (E)-, (1R,2S)-
+  clean_names <- sub("^\\([0-9a-zA-Z,\\+\\-]+\\)-", "", raw_names)
+  
+  # 2. Revert if simplification causes duplicates (loss of unique isomer ID)
+  is_dupe <- duplicated(clean_names) | duplicated(clean_names, fromLast = TRUE)
+  if (any(is_dupe)) {
+    clean_names[is_dupe] <- raw_names[is_dupe]
+  }
+  
+  # 3. Truncate extremely long names
+  max_len <- 60
+  long_idx <- nchar(clean_names) > max_len
+  if (any(long_idx)) {
+    clean_names[long_idx] <- paste0(substr(clean_names[long_idx], 1, max_len - 3), "...")
+  }
+  
+  # Apply simplified names
+  rownames(mat_z_top) <- clean_names
+  # Note: top_meta row names should strictly match mat_z_top for annotation alignment? 
+  # Actually ComplexHeatmap aligns by input matrix. Annotations must just have same nrow.
+  # But better safe to update top_meta rownames too if used for matching.
+  # top_meta itself isn't used for rowID matching inside Heatmap(mat, left_anno), 
+  # left_anno just needs to be same order.
+  # But let's keep them consistent just in case.
+  rownames(top_meta) <- clean_names
+
   # --- 输出 Top50 数据表（可用于图注/补充）---
   top_out <- cbind(
     top_meta,
@@ -111,18 +139,29 @@ fig2_make_main <- function(
   # --- 6) 颜色与注释 ---
   set.seed(1)
   superclass_levels <- sort(unique(top_meta$Super_Class))
-  superclass_cols <- setNames(
-    circlize::rand_color(length(superclass_levels), luminosity = "bright"),
-    superclass_levels
-  )
+  # Color Palette Optimization: Use Okabe-Ito (Colorblind safe, distinct, "Academic")
+  # Avoids deep reds/blues that look like heatmap values.
+  okabe_ito <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#999999", "#000000")
+  
+  # Cycle colors if more classes than colors
+  if (length(superclass_levels) > length(okabe_ito)) {
+      superclass_cols <- setNames(rep(okabe_ito, length.out = length(superclass_levels)), superclass_levels)
+  } else {
+      superclass_cols <- setNames(okabe_ito[seq_along(superclass_levels)], superclass_levels)
+  }
 
   treatment_levels <- fig2_default_treatment_order(colnames(mat_z_top))
-  base_treatment_cols <- c("#1B9E77", "#66A61E", "#E6AB02", "#D95F02", "#E7298A")
-  if (length(treatment_levels) <= length(base_treatment_cols)) {
-    treatment_cols <- setNames(base_treatment_cols[seq_along(treatment_levels)], treatment_levels)
+  # Use a different subset or distinct colors for treatments to avoid confusion
+  # YS0, YS25, ... implies an order. Let's use a Viridis-like discrete scale or just distinct safe colors.
+  # Using the last few from Okabe or a neutral distinct set. 
+  # Let's use a custom "Academic" sequential-ish set for Treatments if they are ordered, 
+  # Or just nice distinct ones. 
+  # Set: Slate, Teal, Gold, Brick, Rose
+  treat_cols_safe <- c("#4053d3", "#ddb310", "#b51d14", "#00beff", "#fb49b0") 
+  if (length(treatment_levels) <= length(treat_cols_safe)) {
+    treatment_cols <- setNames(treat_cols_safe[seq_along(treatment_levels)], treatment_levels)
   } else {
-    extra_cols <- circlize::rand_color(length(treatment_levels) - length(base_treatment_cols), luminosity = "bright")
-    treatment_cols <- setNames(c(base_treatment_cols, extra_cols), treatment_levels)
+    treatment_cols <- setNames(rep(treat_cols_safe, length.out = length(treatment_levels)), treatment_levels)
   }
 
   col_fun <- circlize::colorRamp2(c(-2, 0, 2), c("#2166AC", "white", "#B2182B"))
@@ -150,7 +189,8 @@ fig2_make_main <- function(
   top_anno <- ComplexHeatmap::HeatmapAnnotation(
     Treatment = factor(colnames(mat_z_top), levels = treatment_levels),
     col = list(Treatment = treatment_cols),
-    annotation_name_gp = grid::gpar(fontsize = 9)
+    annotation_name_gp = grid::gpar(fontsize = 9),
+    show_annotation_name = FALSE # Hide "Treatment" label to avoid overlap
   )
 
   ht <- ComplexHeatmap::Heatmap(
@@ -162,7 +202,14 @@ fig2_make_main <- function(
     show_row_dend = FALSE,
     column_dend_height = grid::unit(18, "mm"),
     row_names_side = "left",
-    row_names_gp = grid::gpar(fontsize = 6),
+    row_names_gp = grid::gpar(fontsize = 8), 
+    
+    # Dynamically calculate width needed for row names
+    row_names_max_width = ComplexHeatmap::max_text_width(
+      rownames(mat_z_top), 
+      gp = grid::gpar(fontsize = 8)
+    ) + grid::unit(10, "mm"), # Add buffer
+    
     column_names_gp = grid::gpar(fontsize = 9),
     top_annotation = top_anno,
     left_annotation = left_anno,
@@ -179,12 +226,12 @@ fig2_make_main <- function(
   message("每组样本数：", paste(names(group_n), as.integer(group_n), sep = "=", collapse = ", "),
           "（按 Treatment 取均值绘图）")
   message("输出：", out_pdf)
-  grDevices::pdf(out_pdf, width = 11, height = 8, useDingbats = FALSE)
+  grDevices::pdf(out_pdf, width = 15, height = 9, useDingbats = FALSE)
   ComplexHeatmap::draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
   grDevices::dev.off()
 
   message("输出：", out_tiff)
-  grDevices::tiff(out_tiff, width = 11, height = 8, units = "in", res = 600, compression = "lzw")
+  grDevices::tiff(out_tiff, width = 15, height = 9, units = "in", res = 600, compression = "lzw")
   ComplexHeatmap::draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
   grDevices::dev.off()
 

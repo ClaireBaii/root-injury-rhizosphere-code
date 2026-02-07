@@ -1,0 +1,9 @@
+Figure 6. Relative abundance trajectories of trend-responsive bacterial phyla across root severance treatments.
+
+Relative abundance (%) of five bacterial phyla showing significant monotonic trends (Spearman |ρ| ≥ 0.7) in response to root severance ratio (RS). Points represent treatment-level means (n = 3 trees per treatment), and error bars indicate ± standard deviation (SD). Significance was assessed by Kruskal–Wallis tests with Benjamini–Hochberg (BH) correction across phyla; q-values and significance levels are shown in each panel (*, q < 0.05; **, q < 0.01; ***, q < 0.001).
+
+(A) Armatimonadota showed a non-monotonic response, peaking at RS 75%.
+(B) Bdellovibrionota exhibited an increasing trend with higher root severance ratios.
+(C) Desulfobacterota increased progressively with RS, reaching maximum abundance at RS 100%.
+(D) Patescibacteria displayed elevated abundance at intermediate-to-high RS levels, with maximum at RS 75%.
+(E) Unclassified Bacteria showed variable responses across treatments.

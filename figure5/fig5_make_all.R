@@ -1,846 +1,518 @@
-# Figure 5（网络：代谢物网络 + 微生物网络）
-# R >= 4.4.3
+# Figure 5 Redesign: Strict Readability Rules
+# 
+# Outputs:
+# - Fig5_main.pdf/png/vector.pdf (180x120mm)
+# - FigS5A_exudate_network.pdf (Full network, no labels)
+# - FigS5B_microbe_network.pdf (Full network, high res)
 #
-# 输入数据（来自 ../data/）：
-#   - 完整数据-分泌物.csv
-#   - 完整数据-微生物.csv
-#
-# 主要输出（默认写入本脚本所在目录 figure5/）：
-#   - Fig5_main.pdf / Fig5_main.tiff
-#   - Fig5_network_topology.csv
-#   - FigS5_threshold_sensitivity.pdf / FigS5_threshold_sensitivity_table.csv
-#   - FigS_posneg_permutation.pdf / posneg_test_results.csv
+# Logic:
+# - A: Exudate -> Louvain -> Aggregated Modules (Top 8 + Other) -> Top 15 Inter-module Edges
+# - B: Microbe -> Top 40 Genera -> Top 2 Edges/Node -> Top 12 Labelled Hubs
+# - C: Topology Table (Exudate thr0.8, Microbe thr0.6)
 
 options(stringsAsFactors = FALSE)
 
-required_pkgs <- c(
-  "igraph",
-  "Hmisc",
-  "ggraph",
-  "ggplot2",
-  "RColorBrewer",
-  "scales"
-)
-
-missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
-if (length(missing_pkgs) > 0) {
-  stop(
-    paste0(
-      "Missing required R packages: ", paste(missing_pkgs, collapse = ", "), "\n",
-      "Please install them first, e.g.:\n",
-      "  install.packages(c(", paste(sprintf('\"%s\"', missing_pkgs), collapse = ", "), "))\n"
-    ),
-    call. = FALSE
-  )
-}
-
+# --- Packages ---
 suppressPackageStartupMessages({
   library(igraph)
-  library(Hmisc)
   library(ggraph)
   library(ggplot2)
-  library(RColorBrewer)
+  library(dplyr)
+  library(tibble)
+  library(tidyr)
+  library(patchwork)
+  library(gridExtra)
+  library(stringr)
   library(scales)
+  library(ggrepel)
+  library(cowplot)
+  library(grid) # Essential for textGrob
 })
 
-this_file <- function() {
-  cmd_args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", cmd_args, value = TRUE)
-  if (length(file_arg) > 0) {
-    return(normalizePath(sub("^--file=", "", file_arg[1]), winslash = "/", mustWork = TRUE))
-  }
-  if (!is.null(sys.frames()[[1]]$ofile)) {
-    return(normalizePath(sys.frames()[[1]]$ofile, winslash = "/", mustWork = TRUE))
-  }
-  stop("Cannot determine the current script path. Please run via Rscript --file=... or set working directory to figure5/.", call. = FALSE)
-}
-
-script_path <- this_file()
-script_dir <- dirname(script_path)
-
-pick_existing <- function(paths) {
-  for (p in paths) {
-    if (file.exists(p)) return(normalizePath(p, winslash = "/", mustWork = TRUE))
-  }
-  stop("File not found. Tried:\n  - ", paste(paths, collapse = "\n  - "), call. = FALSE)
-}
-
-data_exudate <- pick_existing(c(
-  file.path(script_dir, "..", "data", "完整数据-分泌物.csv"),
-  file.path(getwd(), "data", "完整数据-分泌物.csv"),
-  file.path(getwd(), "..", "data", "完整数据-分泌物.csv")
-))
-
-data_microbe <- pick_existing(c(
-  file.path(script_dir, "..", "data", "完整数据-微生物.csv"),
-  file.path(getwd(), "data", "完整数据-微生物.csv"),
-  file.path(getwd(), "..", "data", "完整数据-微生物.csv")
-))
-
-out_dir <- script_dir
-
+# --- Configuration ---
 config <- list(
-  fdr_alpha = 0.05,
-  thr_exudate = 0.80,          # 代谢物网络阈值（稍高以减少密度）
-  thr_microbe = 0.60,          # 微生物网络阈值（降低以获得更多边）
-  thr_sensitivity_high = 0.7,  # 敏感性分析高阈值
-  thr_sensitivity_low = 0.5,   # 敏感性分析低阈值
-  hub_top_n = 8,               # 标注的 top hub 数量
-  seed = 42,
-  # 为避免 1800+ 代谢物网络"毛球"过密，默认仅取 max(|log2FC|) Top N 代谢物构网；
-  # 如需使用全部代谢物：将 exudate_filter = NULL（或把 exudate_top_n 调大）。
-  exudate_filter = "max_abs_log2fc", # NULL / "max_abs_log2fc"
-  exudate_top_n = 60,         # 适当增加节点数量以显示更丰富的网络结构
-  microbe_rank = "genus",     # 改为 genus 以获得更多节点
-  microbe_top_n = 40,         # 增加 taxa 数量
-  microbe_min_prevalence = 0.15, # 降低 prevalence 阈值
-  perm_n = 10000
+  # Canvas
+  width_mm = 200,    # Increased from 180
+  height_mm = 135,   # Increased from 120
+  base_size = 11,
+  
+  # Inputs
+  thr_exudate = 0.8,
+  thr_microbe = 0.6,
+  
+  # Panel A Settings
+  A_top_modules = 8,
+  A_top_edges = 15,
+  
+  # Panel B Settings
+  B_top_nodes = 40,
+  B_sparsify_k = 2,
+  B_label_hubs = 12,
+  B_top_modules = 6,
+  
+  # Seeds
+  seed = 123
 )
 
-extract_tax_rank <- function(taxonomy, rank = c("phylum", "genus")) {
-  rank <- match.arg(rank)
-  prefix <- switch(rank, phylum = "p__", genus = "g__")
-  out <- rep(NA_character_, length(taxonomy))
+# --- Helpers ---
 
-  for (i in seq_along(taxonomy)) {
-    tx <- taxonomy[i]
-    if (is.na(tx) || !nzchar(tx)) next
-    parts <- strsplit(tx, ";", fixed = TRUE)[[1]]
-    parts <- trimws(parts)
-    hit <- parts[startsWith(parts, prefix)]
-    if (length(hit) == 0) next
-    val <- sub(paste0("^", prefix), "", hit[1])
-    val <- trimws(val)
-    if (!nzchar(val) || grepl("^unclassified|^uncultured", val, ignore.case = TRUE)) next
-    out[i] <- val
-  }
-
-  out[is.na(out)] <- paste0("Unclassified_", rank)
-  out
-}
-
-read_exudate_matrix <- function(path) {
-  df <- read.csv(path, check.names = FALSE)
-  if (!("Name" %in% names(df))) stop("Exudate file missing column: Name", call. = FALSE)
-
-  if (!is.null(config$exudate_filter) && identical(config$exudate_filter, "max_abs_log2fc")) {
-    log2_cols <- grep("^log2FC_", names(df), value = TRUE)
-    if (length(log2_cols) > 0 && is.finite(config$exudate_top_n) && config$exudate_top_n > 0) {
-      log2_mat <- as.matrix(df[, log2_cols, drop = FALSE])
-      storage.mode(log2_mat) <- "double"
-      score <- apply(abs(log2_mat), 1, function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE))
-      ord <- order(score, decreasing = TRUE, na.last = NA)
-      if (length(ord) == 0) {
-        warning("All log2FC_ values are NA; using all exudate features.", call. = FALSE)
-      } else {
-        if (length(ord) > config$exudate_top_n) ord <- ord[seq_len(config$exudate_top_n)]
-        df <- df[ord, , drop = FALSE]
-      }
-    } else {
-      warning("No usable log2FC_ columns found; using all exudate features.", call. = FALSE)
-    }
-  }
-
-  sample_cols <- grep("^YS", names(df), value = TRUE)
-  if (length(sample_cols) < 3) stop("Exudate sample columns not found (expected columns starting with 'YS').", call. = FALSE)
-
-  node_name <- df$Name
-  node_name <- ifelse(is.na(node_name) | !nzchar(node_name), paste0("Metabolite_", seq_len(nrow(df))), node_name)
-  node_name <- make.unique(node_name)
-
-  mat <- as.matrix(df[, sample_cols, drop = FALSE])
-  storage.mode(mat) <- "double"
-  rownames(mat) <- node_name
-
-  keep <- apply(mat, 1, function(x) isTRUE(sd(x, na.rm = TRUE) > 0))
-  mat <- mat[keep, , drop = FALSE]
-
-  meta_cols <- intersect(c("Super_Class", "Class", "Sub_Class"), names(df))
-  meta <- df[keep, c("Name", meta_cols), drop = FALSE]
-  rownames(meta) <- rownames(mat)
-
-  list(mat = mat, meta = meta, sample_cols = sample_cols)
-}
-
-read_microbe_matrix <- function(path,
-                               rank = c("phylum", "genus"),
-                               top_n = 30,
-                               min_prevalence = 0.2) {
-  rank <- match.arg(rank)
-  df <- read.csv(path, check.names = FALSE)
-
-  if (!("taxonomy" %in% names(df))) stop("Microbe file missing column: taxonomy", call. = FALSE)
-  if (!("OTU ID" %in% names(df))) stop("Microbe file missing column: OTU ID", call. = FALSE)
-
-  sample_cols <- setdiff(names(df), c("OTU ID", "taxonomy"))
-  if (length(sample_cols) < 3) stop("Microbe sample columns not found.", call. = FALSE)
-
-  mat <- as.matrix(df[, sample_cols, drop = FALSE])
-  storage.mode(mat) <- "double"
-
-  group <- extract_tax_rank(df$taxonomy, rank = rank)
-  agg <- rowsum(mat, group = group, reorder = FALSE)
-
-  # 将 NA 值替换为 0，避免 colSums 返回 NA
-  agg[is.na(agg)] <- 0
+load_data <- function() {
+  # Construct paths
+  f_ex_edge <- list.files(pattern = paste0("Fig5A_exudate_edges_thr", config$thr_exudate), full.names = TRUE)[1]
+  f_ex_node <- list.files(pattern = paste0("Fig5A_exudate_nodes_thr", config$thr_exudate), full.names = TRUE)[1]
+  f_mic_edge <- list.files(pattern = paste0("Fig5B_microbe_edges_thr", config$thr_microbe), full.names = TRUE)[1]
+  f_mic_node <- list.files(pattern = paste0("Fig5B_microbe_nodes_thr", config$thr_microbe), full.names = TRUE)[1]
+  f_topo <- "Fig5_network_topology.csv"
   
-  col_sums <- colSums(agg)
-  if (any(is.na(col_sums)) || any(col_sums <= 0)) {
-    warning("Some samples have zero total counts; filtering out these samples.", call. = FALSE)
-    valid_cols <- !is.na(col_sums) & col_sums > 0
-    agg <- agg[, valid_cols, drop = FALSE]
-    col_sums <- col_sums[valid_cols]
-    sample_cols <- sample_cols[valid_cols]
-  }
-  rel <- sweep(agg, 2, col_sums, "/")
-
-  prevalence <- rowMeans(rel > 0)
-  rel <- rel[prevalence >= min_prevalence, , drop = FALSE]
-
-  keep <- apply(rel, 1, function(x) isTRUE(sd(x, na.rm = TRUE) > 0))
-  rel <- rel[keep, , drop = FALSE]
-
-  if (!is.null(top_n) && is.finite(top_n) && nrow(rel) > top_n) {
-    m <- rowMeans(rel, na.rm = TRUE)
-    top_taxa <- names(sort(m, decreasing = TRUE))[seq_len(top_n)]
-    rel <- rel[top_taxa, , drop = FALSE]
-  }
-
-  list(mat = rel, sample_cols = sample_cols)
-}
-
-bh_adjust_matrix <- function(p_mat) {
-  ut <- upper.tri(p_mat, diag = FALSE)
-  p_vec <- p_mat[ut]
-  p_vec[is.na(p_vec)] <- 1
-  p_adj_vec <- p.adjust(p_vec, method = "BH")
-
-  p_adj <- matrix(NA_real_, nrow = nrow(p_mat), ncol = ncol(p_mat), dimnames = dimnames(p_mat))
-  p_adj[ut] <- p_adj_vec
-  p_adj[lower.tri(p_adj)] <- t(p_adj)[lower.tri(p_adj)]
-  p_adj
-}
-
-build_correlation_network <- function(mat,
-                                      threshold,
-                                      fdr_alpha = 0.05,
-                                      hub_top_n = 10,
-                                      seed = 42) {
-  if (nrow(mat) < 3) stop("Need at least 3 nodes to build a network.", call. = FALSE)
-  if (ncol(mat) < 5) warning("Sample size < 5; correlation network may be unstable.", call. = FALSE)
-
-  cor_res <- Hmisc::rcorr(t(mat), type = "spearman")
-  r_mat <- cor_res$r
-  p_mat <- cor_res$P
-  p_adj <- bh_adjust_matrix(p_mat)
-
-  ut <- upper.tri(r_mat, diag = FALSE)
-  keep <- ut & (abs(r_mat) >= threshold) & (p_adj < fdr_alpha)
-
-  idx <- which(keep, arr.ind = TRUE)
-  edges <- data.frame(
-    from = rownames(r_mat)[idx[, 1]],
-    to = colnames(r_mat)[idx[, 2]],
-    rho = r_mat[idx],
-    abs_rho = abs(r_mat[idx]),
-    p = p_mat[idx],
-    p_adj = p_adj[idx],
-    sign = ifelse(r_mat[idx] >= 0, "positive", "negative")
-  )
-
-  if (nrow(edges) == 0) {
-    stop(
-      sprintf("No edges passed the filter (|rho| >= %.2f and BH-FDR < %.3f).", threshold, fdr_alpha),
-      call. = FALSE
-    )
-  }
-
-  g <- igraph::graph_from_data_frame(edges, directed = FALSE)
-  # 保留边属性，因为 simplify 会移除重复边
-  # 首先创建映射以在 simplify 后恢复属性
-  edge_attr_df <- edges[, c("from", "to", "rho", "abs_rho", "sign"), drop = FALSE]
+  if (any(is.na(c(f_ex_edge, f_ex_node, f_mic_edge, f_mic_node)))) stop("Missing input files used pattern matching.")
   
-  g <- igraph::simplify(g, remove.multiple = TRUE, remove.loops = TRUE, 
-                        edge.attr.comb = list(rho = "first", abs_rho = "first", 
-                                              p = "first", p_adj = "first", 
-                                              sign = "first"))
-  
-  # 确保边属性是数值型
-  if (is.null(E(g)$rho) || any(is.na(E(g)$rho))) {
-    # 如果属性丢失，从 edges 重新匹配
-    el <- as_edgelist(g)
-    for (i in seq_len(ecount(g))) {
-      from_v <- el[i, 1]
-      to_v <- el[i, 2]
-      match_idx <- which((edges$from == from_v & edges$to == to_v) | 
-                         (edges$from == to_v & edges$to == from_v))[1]
-      if (!is.na(match_idx)) {
-        E(g)[i]$rho <- edges$rho[match_idx]
-        E(g)[i]$abs_rho <- edges$abs_rho[match_idx]
-        E(g)[i]$sign <- edges$sign[match_idx]
-      }
-    }
-  }
-  
-  E(g)$abs_rho <- as.numeric(E(g)$abs_rho)
-  E(g)$rho <- as.numeric(E(g)$rho)
-  E(g)$sign <- ifelse(E(g)$rho >= 0, "positive", "negative")
-
-  cl <- igraph::cluster_louvain(g, weights = E(g)$abs_rho)
-  V(g)$module <- as.factor(igraph::membership(cl))
-
-  V(g)$degree <- igraph::degree(g, mode = "all")
-  V(g)$strength <- igraph::strength(g, weights = E(g)$abs_rho)
-  V(g)$betweenness <- igraph::betweenness(g, weights = 1 / E(g)$abs_rho, normalized = FALSE)
-
-  deg <- V(g)$degree
-  names(deg) <- V(g)$name
-  hub_top_n <- min(hub_top_n, length(deg))
-  hubs <- names(sort(deg, decreasing = TRUE))[seq_len(hub_top_n)]
-
-  V(g)$is_hub <- V(g)$name %in% hubs
-  V(g)$label <- ifelse(V(g)$is_hub, V(g)$name, "")
-
-  list(graph = g, edges = edges, cluster = cl, hubs = hubs)
-}
-
-network_topology <- function(g, cluster) {
-  comp <- igraph::components(g)
-  giant_id <- which.max(comp$csize)
-  giant_nodes <- sum(comp$membership == giant_id)
-
-  g_giant <- igraph::induced_subgraph(g, vids = which(comp$membership == giant_id))
-  mean_dist <- if (vcount(g_giant) > 1) igraph::mean_distance(g_giant, directed = FALSE) else NA_real_
-
-  data.frame(
-    nodes = igraph::vcount(g),
-    edges = igraph::ecount(g),
-    avg_degree = mean(igraph::degree(g)),
-    density = igraph::edge_density(g, loops = FALSE),
-    transitivity_global = igraph::transitivity(g, type = "global"),
-    modularity_Q = igraph::modularity(cluster),
-    n_modules = length(unique(igraph::membership(cluster))),
-    pos_edges = sum(E(g)$rho > 0),
-    neg_edges = sum(E(g)$rho < 0),
-    pos_neg_ratio = ifelse(sum(E(g)$rho < 0) == 0, NA_real_, sum(E(g)$rho > 0) / sum(E(g)$rho < 0)),
-    largest_component_nodes = giant_nodes,
-    mean_distance_giant = mean_dist
-  )
-}
-
-make_module_palette <- function(mod_levels) {
-  n <- length(mod_levels)
-  # Okabe-Ito colorblind-friendly palette (extended)
-  okabe_ito <- c(
-    "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2",
-    "#D55E00", "#CC79A7", "#999999", "#000000", "#88CCEE",
-    "#44AA99", "#117733", "#332288", "#AA4499", "#882255",
-    "#661100", "#6699CC", "#DDCC77"
-  )
-  cols <- if (n <= length(okabe_ito)) {
-    okabe_ito[seq_len(n)]
-  } else {
-    grDevices::colorRampPalette(okabe_ito)(n)
-  }
-  names(cols) <- mod_levels
-  cols
-}
-
-
-plot_network <- function(g,
-                         title,
-                         subtitle,
-                         node_size_attr = c("degree", "betweenness"),
-                         label_size = 2.8,
-                         filter_isolates = TRUE,
-                         layout_algo = c("stress", "fr", "graphopt"),
-                         seed = 42) {
-  node_size_attr <- match.arg(node_size_attr)
-  layout_algo <- match.arg(layout_algo)
-  
-  # 过滤孤立节点（度=0）
-  if (filter_isolates) {
-    isolates <- which(igraph::degree(g) == 0)
-    if (length(isolates) > 0) {
-      g <- igraph::delete_vertices(g, isolates)
-    }
-  }
-  
-  # 如果过滤后没有节点，返回空图
-  if (igraph::vcount(g) == 0) {
-    return(ggplot() + theme_void() + 
-           labs(title = title, subtitle = "No connected nodes after filtering"))
-  }
-  
-  mod_levels <- levels(V(g)$module)
-  if (is.null(mod_levels)) mod_levels <- as.character(unique(V(g)$module))
-  module_cols <- make_module_palette(mod_levels)
-
-  V(g)$size_plot <- if (node_size_attr == "degree") {
-    scales::rescale(V(g)$degree, to = c(4, 14))
-  } else {
-    scales::rescale(log1p(V(g)$betweenness), to = c(4, 14))
-  }
-
-  set.seed(seed)
-  
-  # 选择布局算法
-  layout_spec <- switch(layout_algo,
-    "stress" = "stress",
-    "fr" = "fr",
-    "graphopt" = "graphopt"
-  )
-  
-  p <- ggraph(g, layout = layout_spec) +
-    geom_edge_link(
-      aes(edge_colour = sign, edge_alpha = abs_rho, edge_width = abs_rho),
-      show.legend = TRUE,
-      lineend = "round"
-    ) +
-    geom_node_point(
-      aes(fill = module, size = size_plot),
-      shape = 21,
-      color = "grey20",
-      stroke = 0.4,
-      alpha = 0.9,
-      show.legend = TRUE
-    )
-
-  # 标签样式优化
-  if (requireNamespace("ggrepel", quietly = TRUE)) {
-    p <- p + geom_node_text(
-      aes(label = label), 
-      repel = TRUE, 
-      size = label_size,
-      fontface = "bold.italic",
-      color = "grey10",
-      max.overlaps = 20,
-      point.padding = unit(0.3, "lines"),
-      box.padding = unit(0.4, "lines"),
-      segment.color = "grey40",
-      segment.size = 0.25,
-      segment.alpha = 0.6,
-      min.segment.length = 0,
-      force = 2,
-      force_pull = 0.5
-    )
-  } else {
-    p <- p + geom_node_text(aes(label = label), repel = FALSE, size = label_size, check_overlap = TRUE)
-  }
-
-  p +
-    scale_fill_manual(values = module_cols, name = "Module") +
-    scale_edge_colour_manual(
-      values = c(positive = "#4393C3", negative = "#D6604D"),
-      name = "Edge"
-    ) +
-    scale_edge_alpha(range = c(0.15, 0.75), name = expression("|"*rho*"|")) +
-    scale_edge_width(range = c(0.15, 1.2), guide = "none") +
-    scale_size_identity(guide = "none") +
-    theme_void(base_size = 11) +
-    theme(
-      legend.position = "bottom",
-      legend.box = "horizontal",
-      legend.box.just = "center",
-      legend.margin = margin(t = 8, b = 5),
-      legend.spacing.x = unit(0.8, "cm"),
-      legend.title = element_text(size = 9, face = "bold"),
-      legend.text = element_text(size = 7.5),
-      legend.key.size = unit(0.4, "cm"),
-      plot.title = element_text(face = "bold", size = 14, hjust = 0, margin = margin(b = 2)),
-      plot.subtitle = element_text(size = 9, hjust = 0, color = "grey40", margin = margin(b = 8)),
-      plot.margin = margin(15, 15, 10, 15),
-      plot.background = element_rect(fill = "white", color = NA)
-    ) +
-    guides(
-      fill = guide_legend(nrow = 1, override.aes = list(size = 5, alpha = 1)),
-      edge_colour = guide_legend(override.aes = list(edge_width = 2, edge_alpha = 0.8)),
-      edge_alpha = guide_legend(nrow = 1, override.aes = list(edge_width = 2))
-    ) +
-    labs(title = title, subtitle = subtitle)
-}
-
-
-
-save_grid <- function(plots, nrow, ncol, path, width, height, device = c("pdf", "tiff", "png")) {
-  device <- match.arg(device)
-
-  if (device == "pdf") {
-    grDevices::cairo_pdf(path, width = width, height = height, onefile = TRUE)
-  } else if (device == "png") {
-    grDevices::png(path, width = width, height = height, units = "in", res = 300, bg = "white")
-  } else {
-    grDevices::tiff(path, width = width, height = height, units = "in", res = 300, compression = "lzw")
-  }
-
-  grid::grid.newpage()
-  grid::pushViewport(grid::viewport(layout = grid::grid.layout(nrow, ncol)))
-  for (i in seq_along(plots)) {
-    r <- ((i - 1) %/% ncol) + 1
-    c <- ((i - 1) %% ncol) + 1
-    print(plots[[i]], vp = grid::viewport(layout.pos.row = r, layout.pos.col = c))
-  }
-  grDevices::dev.off()
-}
-
-posneg_permutation <- function(pos_edges, neg_edges, n_perm = 10000, seed = 42) {
-  total <- pos_edges + neg_edges
-  if (total <= 0) stop("No edges for permutation test.", call. = FALSE)
-
-  obs_prop <- pos_edges / total
-  set.seed(seed)
-  null_prop <- stats::rbinom(n_perm, size = total, prob = 0.5) / total
-  p_two_sided <- mean(abs(null_prop - 0.5) >= abs(obs_prop - 0.5))
-
   list(
-    total_edges = total,
-    pos_edges = pos_edges,
-    neg_edges = neg_edges,
-    obs_pos_prop = obs_prop,
-    p_two_sided = p_two_sided,
-    null_prop = null_prop
+    ex_edges = read.csv(f_ex_edge),
+    ex_nodes = read.csv(f_ex_node),
+    mic_edges = read.csv(f_mic_edge),
+    mic_nodes = read.csv(f_mic_node),
+    topo = read.csv(f_topo)
   )
 }
 
-run_fig5 <- function(mode = c("all", "exudate", "microbe", "sensitivity", "posneg")) {
-  mode <- match.arg(mode)
+  build_igraph <- function(nodes, edges) {
+  # Standardize 'name' column
+  if (!"name" %in% names(nodes)) {
+    candidates <- c("node", "id", "OTU", "ASV", "Gene", "name")
+    match <- intersect(candidates, names(nodes))
+    if (length(match) > 0) {
+      nodes$name <- nodes[[match[1]]]
+    } else {
+      nodes$name <- as.character(nodes[[1]])
+    }
+  }
+  
+  # igraph uses the first column of 'vertices' df as the symbolic data info.
+  # But specifically it looks for 'name' attribute.
+  g <- graph_from_data_frame(edges, vertices = nodes, directed = FALSE)
+  
+  # Force name attribute if not set (sometimes graph_from_data_frame is tricky)
+  if (is.null(V(g)$name)) {
+     V(g)$name <- as.character(nodes$name)
+  }
+  
+  E(g)$weight <- abs(E(g)$rho)
+  E(g)$sign <- ifelse(E(g)$rho > 0, "Pos", "Neg")
+  V(g)$degree <- degree(g)
+  return(g)
+}
 
-  message("Reading inputs...")
-  exu <- read_exudate_matrix(data_exudate)
-  mic <- read_microbe_matrix(
-    data_microbe,
-    rank = config$microbe_rank,
-    top_n = config$microbe_top_n,
-    min_prevalence = config$microbe_min_prevalence
+# --- Panel A Logic ---
+
+process_panel_A <- function(g) {
+  # 1. Louvain Clustering (if not already strictly module attribute, recalc to be safe or use existing)
+  # User file has 'module'. Let's trust it or re-run if needed. 
+  # Request says "用 igraph ... Louvain 分模块". Let's re-run to ensure consistency or use existing if compatible.
+  # Better to use existing 'module' column from CSV if valid, to match previous analyses.
+  # Checking if 'module' exists in V(g).
+  if (is.null(V(g)$module)) {
+    cl <- cluster_louvain(g)
+    V(g)$module <- membership(cl)
+  }
+  
+  # 2. Module Stats & Top K
+  mod_counts <- table(V(g)$module)
+  top_mods <- names(sort(mod_counts, decreasing = TRUE))[1:min(config$A_top_modules, length(mod_counts))]
+  
+  # Relabel
+  # Use local variable to preserve factor levels (igraph may strip them)
+  mod_char <- as.character(V(g)$module)
+  mod_lbl <- ifelse(mod_char %in% top_mods, paste0("M", mod_char), "Other")
+  
+  # Ensure "Other" is last factor level for color consistency
+  lvl <- c(paste0("M", top_mods), "Other")
+  mod_lbl <- factor(mod_lbl, levels = lvl)
+  
+  # Store character in graph for plotting later (if needed)
+  V(g)$mod_label <- as.character(mod_lbl)
+  
+  # Console stats
+  cat("\n[Panel A] Top 8 Modules Sizes:\n")
+  print(mod_counts[top_mods])
+  
+  # 3. Aggregate
+  # We need a new graph where nodes are modules
+  # Edges are sum of counts
+  
+  # Extract edge list with source/target modules
+  el <- as_edgelist(g, names = FALSE)
+  
+  # Map node indices to module labels using local factor
+  m1 <- mod_lbl[el[,1]]
+  m2 <- mod_lbl[el[,2]]
+  
+  edge_df <- data.frame(from = pmin(as.character(m1), as.character(m2)),
+                        to = pmax(as.character(m1), as.character(m2)),
+                        rho = E(g)$rho) %>%
+    filter(from != to) %>% # Remove intra-module edges for the summary map
+    group_by(from, to) %>%
+    summarise(
+      edge_count = n(),
+      mean_abs_rho = mean(abs(rho)),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(edge_count), desc(mean_abs_rho))
+  
+  # Keep top edges
+  top_edges <- head(edge_df, config$A_top_edges)
+  
+  cat("\n[Panel A] Top 15 Inter-Module Edges:\n")
+  print(top_edges)
+  
+  # Build Summary Graph
+  # Build Summary Graph
+  # Nodes: Module names + Sizes
+  mod_sizes <- table(mod_lbl) # Use local factor
+  node_df <- data.frame(name = levels(mod_lbl))
+  node_df$size <- as.numeric(mod_sizes[node_df$name])
+  
+  g_sum <- graph_from_data_frame(top_edges, vertices = node_df, directed = FALSE)
+  
+  return(g_sum)
+}
+
+plot_panel_A <- function(g_sum) {
+  set.seed(config$seed)
+  # Layout adjustment: Circle and Spread
+  layout <- create_layout(g_sum, layout = "circle")
+  layout$x <- layout$x * 1.6
+  layout$y <- layout$y * 1.6
+  
+  p <- ggraph(layout) +
+    geom_edge_link(aes(width = edge_count), color = "grey60", alpha = 0.7) +
+    scale_edge_width_continuous(range = c(0.5, 3), name = "Edge Count") +
+    geom_node_point(aes(size = size, fill = name), shape = 21, color = "white", stroke = 1.5, alpha = 0.95) +
+    scale_size_continuous(range = c(6, 22), name = "Module Size") +
+    scale_fill_manual(values = c(RColorBrewer::brewer.pal(8, "Set2"), "grey80"), name = "Module") +
+    geom_node_label(aes(label = name), fill = "white", alpha = 0.8, 
+                    size = 4, fontface = "bold", label.size = 0) + # label.size=0 removes border
+    theme_void(base_size = config$base_size) +
+    labs(tag = "A", 
+         title = "Exudates Co-occurrence (Module Summary)",
+         subtitle = paste0("Summarized by Louvain modules (thr=", config$thr_exudate, "); full network in Fig. S5A")) +
+    theme(
+      plot.margin = margin(8, 8, 8, 8),
+      plot.tag = element_text(face = "bold", size = 16),
+      plot.title = element_text(face = "bold", size = 12),
+      plot.subtitle = element_text(size = 9, color = "grey30"),
+      legend.position = "right",
+      legend.key.size = unit(4, "mm")
+    ) +
+    guides(size = guide_legend(order = 1), fill = guide_legend(order = 2, override.aes = list(size=4)))
+  
+  return(p)
+}
+
+# --- Panel B Logic ---
+
+process_panel_B <- function(g) {
+  # 1. Top 40 Genera
+  if (vcount(g) > config$B_top_nodes) {
+    keep <- names(sort(degree(g), decreasing = TRUE))[1:config$B_top_nodes]
+    g <- induced_subgraph(g, keep)
+  }
+  
+  # 2. Sparsify Edges (Top-k per node)
+  # Helper to find mask
+  el <- as_edgelist(g, names = FALSE)
+  w <- E(g)$weight
+  
+  # For each node 1..N, find incident edges, keep top k
+  keep_edges <- rep(FALSE, ecount(g))
+  
+  # Use incident_edges which returns edge IDs
+  incs <- incident_edges(g, V(g))
+  
+  for (i in seq_along(incs)) {
+    e_ids <- as.numeric(incs[[i]])
+    if (length(e_ids) > 0) {
+      e_w <- w[e_ids]
+      # indices in e_ids to keep
+      top_local <- order(e_w, decreasing = TRUE)[1:min(length(e_w), config$B_sparsify_k)]
+      keep_edges[e_ids[top_local]] <- TRUE
+    }
+  }
+  
+  # Use subgraph_from_edges (newer igraph)
+  # If using older igraph, subgraph.edges is fine but warns.
+  # Safer to check or just use subgraph.edges and suppress warning? 
+  # Let's use specific function if available or fallback.
+  # Use subgraph.edges for better compatibility across versions
+  g_sparse <- subgraph.edges(g, which(keep_edges), delete.vertices = FALSE)
+  
+  # Recalc degree on sparse graph for sizing
+
+  V(g_sparse)$deg_sparse <- degree(g_sparse)
+  
+  # 3. Top Labels
+  # Robust sort and name extraction
+  vals <- V(g_sparse)$deg_sparse
+  names(vals) <- V(g_sparse)$name # Ensure named vector
+  
+  top_hubs <- names(sort(vals, decreasing = TRUE))[1:min(length(vals), config$B_label_hubs)]
+  
+  cat("\n[Panel B] Debug: First 5 names: ", head(V(g_sparse)$name), "\n")
+  cat("[Panel B] Top 12 Hubs:\n")
+  print(top_hubs)
+  
+  # Create label attribute
+  if (length(top_hubs) > 0) {
+    V(g_sparse)$label <- ifelse(V(g_sparse)$name %in% top_hubs, V(g_sparse)$name, NA)
+  } else {
+    V(g_sparse)$label <- NA
+  }
+  
+  # 4. Modules (Recalc on sparse or use original?)
+  # Request: "点颜色=模块（Louvain），模块图例不超过 6 个"
+  # Let's run Louvain on this sparse graph for cleaner visuals
+  cl <- cluster_louvain(g_sparse)
+  mem <- membership(cl)
+  
+  mod_counts <- table(mem)
+  top_mods <- names(sort(mod_counts, decreasing = TRUE))[1:min(config$B_top_modules, length(mod_counts))]
+  
+  V(g_sparse)$mod_col <- ifelse(as.character(mem) %in% top_mods, as.character(mem), "Other")
+  V(g_sparse)$mod_col <- factor(V(g_sparse)$mod_col, levels = c(top_mods, "Other"))
+  
+  return(g_sparse)
+}
+
+plot_panel_B <- function(g) {
+  set.seed(config$seed)
+  # Layout: FR + Spread
+  layout <- create_layout(g, layout = "fr")
+  layout$x <- layout$x * 1.8
+  layout$y <- layout$y * 1.8
+  
+  p <- ggraph(layout) +
+    geom_edge_link(aes(color = sign), alpha = 0.65, width = 0.5) +
+    scale_edge_color_manual(values = c("Pos" = "red", "Neg" = "blue"), name = "Sign") +
+    geom_node_point(aes(size = deg_sparse, fill = mod_col), shape = 21, color = "white", stroke = 0.5, alpha = 0.95) +
+    
+    # Labeling Hubs
+    geom_text_repel(aes(x = x, y = y, label = label), 
+                    size = 3.6,
+                    bg.color = "white", bg.r = 0.15,
+                    box.padding = 0.35, point.padding = 0.25,
+                    max.overlaps = Inf, seed = 42) +
+                    
+    scale_fill_brewer(palette = "Paired", name = "Module") +
+    scale_size_continuous(range = c(2.5, 6.5), name = "Degree") +
+    theme_void(base_size = config$base_size) +
+    labs(tag = "B",
+         title = "Microbiome Co-occurrence",
+         subtitle = stringr::str_wrap(paste0("Top ", config$B_top_nodes, " genera (thr=", config$thr_microbe, "); top-", config$B_sparsify_k, " edges per node; labels show top-", config$B_label_hubs, " hubs"), 50)) +
+    coord_cartesian(clip = "off") +
+    theme(
+      plot.tag = element_text(face = "bold", size = 16),
+      plot.title = element_text(face = "bold", size = 12),
+      plot.subtitle = element_text(size = 9, color = "grey30"),
+      legend.position = "right",
+      plot.margin = margin(8, 40, 8, 8) 
+    )
+  return(p)
+}
+
+# --- Panel C Logic ---
+
+plot_panel_C <- function(topo_df) {
+  # Filter Data
+  df <- topo_df %>%
+    filter((grepl("exudate", dataset, ignore.case = TRUE) & threshold == config$thr_exudate) |
+             (grepl("microbe", dataset, ignore.case = TRUE) & threshold == config$thr_microbe)) %>%
+    select(Dataset = dataset, Nodes = nodes, Edges = edges, AvgDegree = avg_degree, 
+           ModularityQ = modularity_Q, PosNeg = pos_neg_ratio) %>%
+    mutate(
+      Dataset = ifelse(grepl("exudate", Dataset, ignore.case = TRUE), "Exudate", "Microbe"),
+      AvgDegree = round(AvgDegree, 2),
+      ModularityQ = round(ModularityQ, 3),
+      PosNeg = round(PosNeg, 2)
+    )
+  
+  # Format as Grob
+  tt <- ttheme_default(
+    core = list(fg_params = list(fontsize = 9, hjust=0, x=0.1),
+                bg_params = list(fill = c("grey95", "white"))),
+    colhead = list(fg_params = list(fontsize = 10, fontface = "bold", hjust=0, x=0.1),
+                   bg_params = list(fill = "grey80")),
+    padding = unit(c(4, 4), "mm")
   )
-
-  if (mode %in% c("all", "exudate")) {
-    message("Building exudate network (threshold = ", config$thr_exudate, ")...")
-    exu_net <- build_correlation_network(
-      exu$mat,
-      threshold = config$thr_exudate,
-      fdr_alpha = config$fdr_alpha,
-      hub_top_n = config$hub_top_n,
-      seed = config$seed
-    )
-    exu_topo <- network_topology(exu_net$graph, exu_net$cluster)
-    exu_topo$dataset <- "exudate"
-    exu_topo$threshold <- config$thr_exudate
-    exu_topo$fdr_alpha <- config$fdr_alpha
-
-    write.csv(exu_net$edges, file.path(out_dir, sprintf("Fig5A_exudate_edges_thr%.1f.csv", config$thr_exudate)), row.names = FALSE)
-    write.csv(
-      data.frame(
-        node = V(exu_net$graph)$name,
-        module = V(exu_net$graph)$module,
-        degree = V(exu_net$graph)$degree,
-        betweenness = V(exu_net$graph)$betweenness,
-        is_hub = V(exu_net$graph)$is_hub
-      ),
-      file.path(out_dir, sprintf("Fig5A_exudate_nodes_thr%.1f.csv", config$thr_exudate)),
-      row.names = FALSE
-    )
-
-    p_exu <- plot_network(
-      exu_net$graph,
-      title = "A. Exudate co-variance network",
-      subtitle = sprintf("Spearman |rho| >= %.2f; BH-FDR < %.2f; n = %d nodes", 
-                         config$thr_exudate, config$fdr_alpha, igraph::vcount(exu_net$graph)),
-      node_size_attr = "degree",
-      label_size = 2.5,
-      filter_isolates = TRUE,
-      layout_algo = "stress",
-      seed = config$seed
-    )
-
-    # 输出 PNG 格式（更小且适合论文）
-    ggsave(file.path(out_dir, "Fig5A_exudate_network.png"), p_exu, width = 9, height = 8, dpi = 300, bg = "white")
-    # 也输出 PDF 版本
-    ggsave(file.path(out_dir, "Fig5A_exudate_network.pdf"), p_exu, width = 9, height = 8, device = cairo_pdf)
-  }
-
-  if (mode %in% c("all", "microbe")) {
-    message("Building microbe network (threshold = ", config$thr_microbe, ")...")
-    mic_net <- build_correlation_network(
-      mic$mat,
-      threshold = config$thr_microbe,
-      fdr_alpha = config$fdr_alpha,
-      hub_top_n = config$hub_top_n,
-      seed = config$seed
-    )
-    mic_topo <- network_topology(mic_net$graph, mic_net$cluster)
-    mic_topo$dataset <- sprintf("microbe_%s", config$microbe_rank)
-    mic_topo$threshold <- config$thr_microbe
-    mic_topo$fdr_alpha <- config$fdr_alpha
-    mic_topo$top_n_taxa <- config$microbe_top_n
-    mic_topo$min_prevalence <- config$microbe_min_prevalence
-
-    write.csv(mic_net$edges, file.path(out_dir, sprintf("Fig5B_microbe_edges_thr%.1f.csv", config$thr_microbe)), row.names = FALSE)
-    write.csv(
-      data.frame(
-        node = V(mic_net$graph)$name,
-        module = V(mic_net$graph)$module,
-        degree = V(mic_net$graph)$degree,
-        betweenness = V(mic_net$graph)$betweenness,
-        is_hub = V(mic_net$graph)$is_hub
-      ),
-      file.path(out_dir, sprintf("Fig5B_microbe_nodes_thr%.1f.csv", config$thr_microbe)),
-      row.names = FALSE
-    )
-
-    p_mic <- plot_network(
-      mic_net$graph,
-      title = "B. Microbiome co-occurrence network",
-      subtitle = sprintf("Spearman |rho| >= %.2f; BH-FDR < %.2f; %s level (Top %d)", 
-                         config$thr_microbe, config$fdr_alpha, config$microbe_rank, config$microbe_top_n),
-      node_size_attr = "degree",
-      label_size = 3.2,
-      filter_isolates = FALSE,   # 微生物网络保留所有节点
-      layout_algo = "stress",
-      seed = config$seed
-    )
-
-    # 输出 PNG 格式（更小且适合论文）
-    ggsave(file.path(out_dir, "Fig5B_microbe_network.png"), p_mic, width = 9, height = 8, dpi = 300, bg = "white")
-    ggsave(file.path(out_dir, "Fig5B_microbe_network.pdf"), p_mic, width = 9, height = 8, device = cairo_pdf)
-  }
-
-  if (mode == "all") {
-    message("Saving combined main figure...")
-    save_grid(
-      plots = list(p_exu, p_mic),
-      nrow = 1,
-      ncol = 2,
-      path = file.path(out_dir, "Fig5_main.pdf"),
-      width = 15,
-      height = 7,
-      device = "pdf"
-    )
-    save_grid(
-      plots = list(p_exu, p_mic),
-      nrow = 1,
-      ncol = 2,
-      path = file.path(out_dir, "Fig5_main.tiff"),
-      width = 15,
-      height = 7,
-      device = "tiff"
-    )
-    # PNG 格式（更小且适合论文投稿）
-    save_grid(
-      plots = list(p_exu, p_mic),
-      nrow = 1,
-      ncol = 2,
-      path = file.path(out_dir, "Fig5_main.png"),
-      width = 15,
-      height = 7,
-      device = "png"
-    )
-
-    exu_topo$top_n_taxa <- NA_integer_
-    exu_topo$min_prevalence <- NA_real_
-    exu_topo$feature_filter <- sprintf("%s_top%d", config$exudate_filter, config$exudate_top_n)
-    mic_topo$feature_filter <- sprintf("%s_top%d_prev%.1f", config$microbe_rank, config$microbe_top_n, config$microbe_min_prevalence)
-
-    all_cols <- union(names(exu_topo), names(mic_topo))
-
-    align_cols <- function(df, cols) {
-      missing <- setdiff(cols, names(df))
-      for (m in missing) df[[m]] <- NA
-      df[, cols, drop = FALSE]
-    }
-
-    exu_topo <- align_cols(exu_topo, all_cols)
-    mic_topo <- align_cols(mic_topo, all_cols)
-    topo <- rbind(exu_topo, mic_topo)
-    topo <- topo[, c("dataset", "threshold", "fdr_alpha", setdiff(names(topo), c("dataset", "threshold", "fdr_alpha"))), drop = FALSE]
-    write.csv(topo, file.path(out_dir, "Fig5_network_topology.csv"), row.names = FALSE)
-  }
-
-  if (mode %in% c("all", "sensitivity")) {
-    message("Running threshold sensitivity (", config$thr_sensitivity_high, " vs ", config$thr_sensitivity_low, ")...")
-    thr_pair <- c(config$thr_sensitivity_high, config$thr_sensitivity_low)
-
-    exu_thr <- lapply(thr_pair, function(th) build_correlation_network(exu$mat, threshold = th, fdr_alpha = config$fdr_alpha, hub_top_n = config$hub_top_n, seed = config$seed))
-    mic_thr <- lapply(thr_pair, function(th) build_correlation_network(mic$mat, threshold = th, fdr_alpha = config$fdr_alpha, hub_top_n = config$hub_top_n, seed = config$seed))
-
-    exu_metrics <- do.call(rbind, lapply(seq_along(thr_pair), function(i) {
-      m <- network_topology(exu_thr[[i]]$graph, exu_thr[[i]]$cluster)
-      m$dataset <- "exudate"
-      m$threshold <- thr_pair[i]
-      m
-    }))
-
-    mic_metrics <- do.call(rbind, lapply(seq_along(thr_pair), function(i) {
-      m <- network_topology(mic_thr[[i]]$graph, mic_thr[[i]]$cluster)
-      m$dataset <- sprintf("microbe_%s", config$microbe_rank)
-      m$threshold <- thr_pair[i]
-      m
-    }))
-
-    hubs_overlap <- function(h1, h2) {
-      inter <- length(intersect(h1, h2))
-      uni <- length(union(h1, h2))
-      data.frame(
-        hub_top_n = config$hub_top_n,
-        hub_overlap_n = inter,
-        hub_jaccard = ifelse(uni == 0, NA_real_, inter / uni)
-      )
-    }
-
-    exu_hub <- hubs_overlap(exu_thr[[1]]$hubs, exu_thr[[2]]$hubs)
-    mic_hub <- hubs_overlap(mic_thr[[1]]$hubs, mic_thr[[2]]$hubs)
-
-    sens_tbl <- rbind(
-      data.frame(
-        dataset = "exudate",
-        thr_high = thr_pair[1],
-        thr_low = thr_pair[2],
-        modularity_high = igraph::modularity(exu_thr[[1]]$cluster),
-        modularity_low = igraph::modularity(exu_thr[[2]]$cluster),
-        avg_degree_high = mean(igraph::degree(exu_thr[[1]]$graph)),
-        avg_degree_low = mean(igraph::degree(exu_thr[[2]]$graph)),
-        edges_high = igraph::ecount(exu_thr[[1]]$graph),
-        edges_low = igraph::ecount(exu_thr[[2]]$graph),
-        nodes_high = igraph::vcount(exu_thr[[1]]$graph),
-        nodes_low = igraph::vcount(exu_thr[[2]]$graph)
-      ),
-      data.frame(
-        dataset = sprintf("microbe_%s", config$microbe_rank),
-        thr_high = thr_pair[1],
-        thr_low = thr_pair[2],
-        modularity_high = igraph::modularity(mic_thr[[1]]$cluster),
-        modularity_low = igraph::modularity(mic_thr[[2]]$cluster),
-        avg_degree_high = mean(igraph::degree(mic_thr[[1]]$graph)),
-        avg_degree_low = mean(igraph::degree(mic_thr[[2]]$graph)),
-        edges_high = igraph::ecount(mic_thr[[1]]$graph),
-        edges_low = igraph::ecount(mic_thr[[2]]$graph),
-        nodes_high = igraph::vcount(mic_thr[[1]]$graph),
-        nodes_low = igraph::vcount(mic_thr[[2]]$graph)
-      )
-    )
-    sens_tbl$modularity_delta <- sens_tbl$modularity_low - sens_tbl$modularity_high
-    sens_tbl <- cbind(
-      sens_tbl,
-      rbind(exu_hub, mic_hub)
-    )
-    write.csv(sens_tbl, file.path(out_dir, "FigS5_threshold_sensitivity_table.csv"), row.names = FALSE)
-
-    p_exu_high <- plot_network(
-      exu_thr[[1]]$graph,
-      title = sprintf("Exudate |ρ| ≥ %.1f", thr_pair[1]),
-      subtitle = sprintf("BH-FDR < %.2f", config$fdr_alpha),
-      seed = config$seed
-    )
-    p_exu_low <- plot_network(
-      exu_thr[[2]]$graph,
-      title = sprintf("Exudate |ρ| ≥ %.1f", thr_pair[2]),
-      subtitle = sprintf("BH-FDR < %.2f", config$fdr_alpha),
-      seed = config$seed
-    )
-    p_mic_high <- plot_network(
-      mic_thr[[1]]$graph,
-      title = sprintf("Microbe (%s) |ρ| ≥ %.1f", config$microbe_rank, thr_pair[1]),
-      subtitle = sprintf("BH-FDR < %.2f", config$fdr_alpha),
-      seed = config$seed
-    )
-    p_mic_low <- plot_network(
-      mic_thr[[2]]$graph,
-      title = sprintf("Microbe (%s) |ρ| ≥ %.1f", config$microbe_rank, thr_pair[2]),
-      subtitle = sprintf("BH-FDR < %.2f", config$fdr_alpha),
-      seed = config$seed
-    )
-
-    save_grid(
-      plots = list(p_exu_high, p_exu_low, p_mic_high, p_mic_low),
-      nrow = 2,
-      ncol = 2,
-      path = file.path(out_dir, "FigS5_threshold_sensitivity.pdf"),
-      width = 14,
-      height = 12,
-      device = "pdf"
-    )
-  }
-
-  if (mode %in% c("all", "posneg")) {
-    message("Running pos/neg edge permutation test...")
-    if (!exists("exu_net", inherits = FALSE)) {
-      exu_net <- build_correlation_network(
-        exu$mat,
-        threshold = config$thr_exudate,
-        fdr_alpha = config$fdr_alpha,
-        hub_top_n = config$hub_top_n,
-        seed = config$seed
-      )
-    }
-    if (!exists("mic_net", inherits = FALSE)) {
-      mic_net <- build_correlation_network(
-        mic$mat,
-        threshold = config$thr_microbe,
-        fdr_alpha = config$fdr_alpha,
-        hub_top_n = config$hub_top_n,
-        seed = config$seed
-      )
-    }
-
-    exu_perm <- posneg_permutation(
-      pos_edges = sum(E(exu_net$graph)$rho > 0),
-      neg_edges = sum(E(exu_net$graph)$rho < 0),
-      n_perm = config$perm_n,
-      seed = config$seed
-    )
-    mic_perm <- posneg_permutation(
-      pos_edges = sum(E(mic_net$graph)$rho > 0),
-      neg_edges = sum(E(mic_net$graph)$rho < 0),
-      n_perm = config$perm_n,
-      seed = config$seed
-    )
-
-    res_tbl <- rbind(
-      data.frame(
-        dataset = "exudate",
-        total_edges = exu_perm$total_edges,
-        pos_edges = exu_perm$pos_edges,
-        neg_edges = exu_perm$neg_edges,
-        pos_neg_ratio = ifelse(exu_perm$neg_edges == 0, NA_real_, exu_perm$pos_edges / exu_perm$neg_edges),
-        obs_pos_prop = exu_perm$obs_pos_prop,
-        p_two_sided = exu_perm$p_two_sided
-      ),
-      data.frame(
-        dataset = sprintf("microbe_%s", config$microbe_rank),
-        total_edges = mic_perm$total_edges,
-        pos_edges = mic_perm$pos_edges,
-        neg_edges = mic_perm$neg_edges,
-        pos_neg_ratio = ifelse(mic_perm$neg_edges == 0, NA_real_, mic_perm$pos_edges / mic_perm$neg_edges),
-        obs_pos_prop = mic_perm$obs_pos_prop,
-        p_two_sided = mic_perm$p_two_sided
-      )
-    )
-    write.csv(res_tbl, file.path(out_dir, "posneg_test_results.csv"), row.names = FALSE)
-
-    perm_df <- rbind(
-      data.frame(dataset = "exudate", pos_prop = exu_perm$null_prop),
-      data.frame(dataset = sprintf("microbe_%s", config$microbe_rank), pos_prop = mic_perm$null_prop)
-    )
-
-    obs_df <- res_tbl
-    p_perm <- ggplot(perm_df, aes(x = pos_prop)) +
-      geom_histogram(bins = 40, fill = "grey80", color = "grey30") +
-      geom_vline(data = obs_df, aes(xintercept = obs_pos_prop), color = "#e31a1c", linewidth = 1) +
-      facet_wrap(~dataset, scales = "free_y") +
-      theme_classic(base_size = 12) +
-      labs(
-        title = "Permutation test for positive-edge proportion (null: p=0.5)",
-        x = "Positive-edge proportion",
-        y = "Count"
-      )
-
-    ggsave(file.path(out_dir, "FigS_posneg_permutation.pdf"), p_perm, width = 10, height = 5)
-  }
-
-  message("Done. Outputs saved to: ", out_dir)
-  invisible(TRUE)
+  
+  tbl <- tableGrob(df, rows = NULL, theme = tt)
+  
+  # Wrap in ggplot to align with patchwork if needed, or return grob
+  # Patchwork handles grobs via wrap_elements
+  return(tbl)
 }
 
-if (sys.nframe() == 0) {
-  run_fig5("all")
+# --- Supplementary Plots ---
+
+plot_S5A_full <- function(g) {
+  # Full Exudate: No labels, just structure
+  cl <- cluster_louvain(g)
+  V(g)$module <- as.factor(membership(cl))
+  E(g)$color <- ifelse(E(g)$rho > 0, "red", "blue")
+  
+  set.seed(config$seed)
+  ggraph(g, layout = "nicely") +
+    geom_edge_link(aes(color = sign), alpha = 0.15, width = 0.3) +
+    geom_node_point(aes(color = module), size = 1.5, alpha = 0.8) +
+    scale_edge_color_manual(values = c("Pos"="red", "Neg"="blue")) +
+    theme_void() +
+    theme(legend.position = "none") +
+    labs(title = "Figure S5A: Full Exudate Network",
+         subtitle = paste0("1686 Nodes, Thr=", config$thr_exudate, ". Labels omitted for readability."))
 }
+
+plot_S5B_full <- function(g) {
+  # Full Microbe: Labels allowed on Hubs
+  cl <- cluster_louvain(g)
+  V(g)$module <- as.factor(membership(cl))
+  V(g)$label <- ifelse(degree(g) > quantile(degree(g), 0.90), V(g)$name, NA)
+  
+  set.seed(config$seed)
+  ggraph(g, layout = "nicely") +
+    geom_edge_link(aes(color = sign), alpha = 0.2, width = 0.3) +
+    geom_node_point(aes(color = module, size = degree), alpha = 0.9) +
+    geom_text_repel(aes(x = x, y = y, label = label), size = 2, max.overlaps = 30) +
+    scale_edge_color_manual(values = c("Pos"="red", "Neg"="blue")) +
+    scale_size_continuous(range = c(1, 5)) +
+    theme_void() +
+    theme(legend.position = "none") +
+    labs(title = "Figure S5B: Full Microbiome Network",
+         subtitle = paste0("Thr=", config$thr_microbe, ". Top 10% hubs labeled."))
+}
+
+
+# --- Main ---
+
+main <- function() {
+  cat("Loading data...\n")
+  data <- load_data()
+  
+  # Build base graphs
+  g_ex <- build_igraph(data$ex_nodes, data$ex_edges)
+  g_mic <- build_igraph(data$mic_nodes, data$mic_edges)
+  
+  # --- Panel A ---
+  cat("Processing Panel A...\n")
+  g_ex_sum <- process_panel_A(g_ex)
+  pA <- plot_panel_A(g_ex_sum)
+  
+  # --- Panel B ---
+  cat("Processing Panel B...\n")
+  g_mic_sparse <- process_panel_B(g_mic)
+  pB <- plot_panel_B(g_mic_sparse)
+  
+  # --- Panel C ---
+  cat("Processing Panel C...\n")
+  pC <- plot_panel_C(data$topo)
+  
+  # --- Split Layout & Export ---
+  cat("Creating Separated Panels (Clip Off)...\n")
+  
+  # 1. Prepare Individual Panels (Custom margins for standalone output)
+  pA_only <- pA + 
+    coord_cartesian(clip = "off") +
+    theme(plot.margin = margin(5, 5, 5, 5))
+  
+  pB_only <- pB + 
+    coord_cartesian(clip = "off") +
+    theme(
+      plot.margin = margin(5, 35, 5, 5), # Extra right margin for labels/legend
+      legend.position = "right"
+    )
+  
+  # Ensure pC is a ggplot object for modifications if it was a Grob
+  # pC passed here is a gtable/grob from tableGrob. 
+  # We need to wrap it or just save it. tableGrob doesn't take theme(plot.margin).
+  # But we can use grid.arrange or wrap_elements.
+  # For consistent export, let's wrap it in wrap_elements (patchwork) which returns a ggplot.
+  pC_only <- wrap_elements(pC) + 
+    theme(plot.margin = margin(5, 5, 5, 5))
+  
+  # 2. Export Separate Files
+  files_to_check <- c()
+  
+  # Fig5A
+  f_a_pdf <- "Fig5A_module_summary.pdf"
+  f_a_png <- "Fig5A_module_summary.png"
+  ggsave(f_a_pdf, pA_only, width = 100, height = 80, units = "mm", device = "pdf", limitsize = FALSE)
+  ggsave(f_a_png, pA_only, width = 100, height = 80, units = "mm", dpi = 600, limitsize = FALSE)
+  files_to_check <- c(files_to_check, f_a_pdf, f_a_png)
+  
+  # Fig5B
+  f_b_pdf <- "Fig5B_microbiome_network.pdf"
+  f_b_png <- "Fig5B_microbiome_network.png"
+  ggsave(f_b_pdf, pB_only, width = 140, height = 80, units = "mm", device = "pdf", limitsize = FALSE)
+  ggsave(f_b_png, pB_only, width = 140, height = 80, units = "mm", dpi = 600, limitsize = FALSE)
+  files_to_check <- c(files_to_check, f_b_pdf, f_b_png)
+  
+  # Fig5C
+  f_c_pdf <- "Fig5C_network_metrics.pdf"
+  f_c_png <- "Fig5C_network_metrics.png"
+  ggsave(f_c_pdf, pC_only, width = 120, height = 45, units = "mm", device = "pdf", limitsize = FALSE)
+  ggsave(f_c_png, pC_only, width = 120, height = 45, units = "mm", dpi = 600, limitsize = FALSE)
+  files_to_check <- c(files_to_check, f_c_pdf, f_c_png)
+  
+  # 3. Export Combined Big Version
+  cat("Assembling Combined Big Figure...\n")
+  # Use the _only versions but with layout
+  # Need to ensure title C is included if we want it.
+  
+  # Re-make Title C for big plot
+  title_C_grob <- textGrob("C", x = unit(0.01, "npc"), y = unit(0.9, "npc"), 
+                      just = "left", gp = gpar(fontsize = 16, fontface = "bold"))
+  pC_grob_big <- arrangeGrob(title_C_grob, pC, ncol = 1, heights = c(0.15, 0.85))
+  
+  final_big <- (pA_only + pB_only + plot_layout(widths = c(1, 1.45))) /
+               wrap_elements(pC_grob_big) + 
+               plot_layout(heights = c(1, 0.4))
+               
+  ggsave("Fig5_main.pdf", final_big, width = 220, height = 140, units = "mm", device = "pdf", limitsize = FALSE)
+  ggsave("Fig5_main.vector.pdf", final_big, width = 220, height = 140, units = "mm", device = "pdf", limitsize = FALSE)
+  ggsave("Fig5_main.png", final_big, width = 220, height = 140, units = "mm", dpi = 600, limitsize = FALSE)
+  files_to_check <- c(files_to_check, "Fig5_main.pdf", "Fig5_main.vector.pdf", "Fig5_main.png")
+  
+  # --- Supplements ---
+  cat("Generating Supplements...\n")
+  
+  pS5A <- plot_S5A_full(g_ex)
+  ggsave("FigS5A_exudate_network.pdf", pS5A, width = 10, height = 10, device = "pdf")
+  files_to_check <- c(files_to_check, "FigS5A_exudate_network.pdf")
+  
+  pS5B <- plot_S5B_full(g_mic)
+  ggsave("FigS5B_microbe_network.pdf", pS5B, width = 12, height = 12, device = "pdf")
+  files_to_check <- c(files_to_check, "FigS5B_microbe_network.pdf")
+  
+  # --- Verification Output ---
+  cat("\n=== Verification ===\n")
+  cat("1. Output Files:\n")
+  for (f in files_to_check) {
+    if (file.exists(f)) {
+      size_mb <- file.size(f) / 1024 / 1024
+      cat(sprintf("   - %-30s : %.2f MB\n", f, size_mb))
+    } else {
+      cat(sprintf("   - %-30s : [MISSING]\n", f))
+    }
+  }
+  
+  cat("\n2. Topology Metrics (Panel C Content):\n")
+  # Filter again to show exactly what's in the table
+  df_check <- data$topo %>%
+    filter((grepl("exudate", dataset, ignore.case = TRUE) & threshold == config$thr_exudate) |
+             (grepl("microbe", dataset, ignore.case = TRUE) & threshold == config$thr_microbe)) %>%
+    select(Dataset = dataset, Nodes = nodes, Edges = edges, AvgDegree = avg_degree, 
+           Modularity = modularity_Q, PosNeg=pos_neg_ratio)
+  print(df_check)
+  
+  cat("All tasks completed.\n")
+}
+
+# Run
+if (!interactive()) main() else main()

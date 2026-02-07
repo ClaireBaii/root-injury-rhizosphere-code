@@ -1,0 +1,7 @@
+Figure 9. Sparse partial least squares discriminant analysis (sPLS-DA) and correlation network reveal coordinated shifts in metabolome-microbiome interactions across root exudate concentration gradients.
+
+(A) sPLS-DA score plot showing sample separation across five treatment groups (0%, 25%, 50%, 75%, 100% root exudate concentrations; n = 3 per group). Ellipses represent 95% confidence intervals. The model was tuned using 3-fold cross-validation with 50 repeats (centroids.dist, BER criterion).
+
+(B) Loading plots for Component 1 (B1) and Component 2 (B2), displaying the top 10 features (metabolites and phyla) contributing to sample separation. Bar length indicates loading magnitude; direction reflects the contribution to group discrimination.
+
+(C) Chord diagram depicting significant Spearman correlations (|ρ| > 0.6, BH-adjusted q < 0.05) between the 15 most discriminative metabolites and 12 bacterial phyla. Chord color indicates correlation direction (red = positive, blue = negative); chord thickness reflects correlation strength, with |ρ| ≥ 0.8 emphasized. The outer heat ring shows log₂ fold change of metabolite abundance (mean of 25–100% vs 0%), with red indicating upregulation and blue indicating downregulation. Short codes (M1–M15, T1–T12) correspond to full feature names listed in Table S.

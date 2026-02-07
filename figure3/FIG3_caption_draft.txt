@@ -1,0 +1,7 @@
+Figure 3. Alpha diversity and beta diversity of rhizosphere microbial communities under different treatments.
+
+(A) Alpha diversity indices (Chao1, Faith's PD, Shannon, and Simpson) across treatment groups (Control, Treat1–Treat4). Individual samples are shown as gray points; group means ± SD are indicated by colored points and error bars. Significance annotations indicate Dunn's post-hoc test results (BH-adjusted P values) compared to Control (*P < 0.05, **P < 0.01, ***P < 0.001).
+
+(B) Principal Coordinates Analysis (PCoA) based on Bray-Curtis dissimilarity of relative abundance data. Each point represents an individual sample, colored by treatment group. PERMANOVA results (R², P value, and number of permutations) are displayed in the subtitle, indicating the proportion of variance explained by treatment effects.
+
+Statistical analyses were performed using Kruskal-Wallis tests followed by Dunn's multiple comparison tests with Benjamini-Hochberg correction for alpha diversity, and PERMANOVA (9999 permutations) for beta diversity. Shannon index was calculated using log base 2.

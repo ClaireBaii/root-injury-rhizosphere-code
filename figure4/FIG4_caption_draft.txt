@@ -1,0 +1,9 @@
+Figure 4. Phylum-level microbial community composition across rhizosphere soil treatments.
+
+Heatmap showing the relative abundance patterns of the 27 most abundant bacterial phyla across five rhizosphere soil proportion treatments (RS0–RS100, n = 3 per treatment). Values are row-scaled Z-scores calculated from treatment-level mean relative abundances. Hierarchical clustering (Ward.D2 linkage on Euclidean distances) partitioned phyla into two response modules: Module 1 (red annotation) comprising taxa with higher abundance in low-proportion treatments, and Module 2 (blue annotation) comprising taxa enriched in high-proportion treatments. Color scale ranges from blue (Z = −1.5) through white (Z = 0) to red (Z = 1.5).
+
+Panel details:
+- Rows: 27 key phyla ranked by mean relative abundance, clustered by response pattern.
+- Columns: Treatment groups (RS0, RS25, RS50, RS75, RS100); each column represents the mean of three biological replicates.
+- Row annotation: Module membership (Module 1 or Module 2).
+- Column annotation: Treatment identity with distinctive color coding.

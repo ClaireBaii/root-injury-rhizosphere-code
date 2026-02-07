@@ -1,0 +1,5 @@
+Figure 7. Nonlinear response of representative root exudates to root severance intensity.
+
+The abundance of six selected metabolites was measured across five root severance (RS) levels (0%, 25%, 50%, 75%, and 100%; n = 3 per level). Values are expressed as log₂ fold-change (log₂FC) relative to the control mean (RS = 0). Segmented regression (Muggeo class) was applied to detect threshold-type responses; the estimated breakpoint and its 95% confidence interval are shown as a red dashed line and shaded band, respectively. Blue lines and ribbons represent fitted regressions ± 95% prediction intervals. Gray dots indicate individual samples (jittered); black dots and error bars denote group mean ± SE.
+
+(A–F) Each panel corresponds to a single metabolite. Daidzein exhibited a significant breakpoint at 75% RS (P = 0.033), whereas other compounds showed suggestive but non-significant thresholds near 75%. Detailed breakpoint statistics are provided in Table S_breakpoints.
